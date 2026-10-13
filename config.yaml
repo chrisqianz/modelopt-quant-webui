@@ -1,0 +1,28 @@
+# ModelOpt 量化 WebUI 配置
+# 目标机器（hosts）在 UI「目标机器」面板维护，持久化在同目录的 hosts.json（首次运行自动播种）。
+
+# UI 监听
+server:
+  host: 0.0.0.0          # 局域网内其他设备也能打开；只要本机访问改回 127.0.0.1
+  port: 7861
+
+# 目标机器列表在 UI「⚙ 连接设置」面板编辑，保存后写入同目录 hosts.json。
+
+# HuggingFace 下载的网络（只是首次启动的初值，UI 里改了以 UI 为准）
+# 代理地址不在这里写死：留空 = 读本机环境变量（ALL_PROXY / all_proxy），要固定就在 UI 里填。
+# mode: auto   先试直连 huggingface.co，不通再用代理（仅 SSH 机器能自动建反向隧道）
+#       manual 强制用下面的地址
+#       direct 不用代理
+# remote_proxy 给远程机器用（得是远程能连到的地址，不能填 127.0.0.1）
+# local_proxy  给 UI 所在这台机器用（本机跑量化时用）
+network:
+  mode: auto
+  remote_proxy: ""
+  local_proxy: ""
+
+# 默认参数（UI 打开时的初始值，均可在界面上改）
+defaults:
+  calib_size: 1024
+  calib_seq: 512
+  qformat: nvfp4
+  kv_cache_qformat: none

@@ -1,0 +1,178 @@
+"""词表：校准数据集 / 官方组合 / qformat / KV qformat。
+
+静态快照做兜底（离线可用、标注 N 项）；运行时可从远程仓库动态刷新，
+远程 ModelOpt 升级后 UI 自动出现新选项，无需改本文件。
+"""
+
+from __future__ import annotations
+
+import re
+
+from .config import HostConfig
+from .runner import run_remote
+
+# ---------------------------------------------------------------- 数据集快照
+
+# 快照来自 modelopt/torch/utils/dataset_utils.py（SUPPORTED_DATASET_CONFIG）。
+# key = --dataset 的取值；desc = 界面说明。
+DATASETS: list[dict[str, str]] = [
+    {"key": "nemotron-sft-instruction-following-chat-v2", "desc": "Nemotron 指令跟随（对话）"},
+    {"key": "nemotron-science-v1", "desc": "Nemotron 科学问答"},
+    {"key": "nemotron-competitive-programming-v1", "desc": "Nemotron 竞赛编程"},
+    {"key": "nemotron-sft-agentic-v2", "desc": "Nemotron Agentic（工具/代理）"},
+    {"key": "nemotron-math-v2", "desc": "Nemotron 数学推理"},
+    {"key": "nemotron-sft-swe-v2", "desc": "Nemotron SWE（软件工程）"},
+    {"key": "nemotron-sft-multilingual-v1", "desc": "Nemotron 多语言"},
+    {"key": "nemotron-post-training-dataset-v2", "desc": "Nemotron 后训练混合 v2"},
+    {"key": "nemotron-post-training-dataset-v1", "desc": "Nemotron 后训练混合 v1"},
+    {"key": "llama-nemotron-post-training-dataset", "desc": "LLaMA 风格 Nemotron 后训练混合"},
+    {"key": "open_code_reasoning", "desc": "开源代码推理"},
+    {"key": "open_math_reasoning", "desc": "开源数学推理"},
+    {"key": "magpie", "desc": "Magpie 通用指令"},
+    {"key": "cnn_dailymail", "desc": "CNN/DailyMail 新闻摘要"},
+    {"key": "pile", "desc": "The Pile 通用文本"},
+    {"key": "pg19", "desc": "PG19 小说"},
+    {"key": "wikipedia", "desc": "Wikipedia"},
+    {"key": "c4", "desc": "C4 通用网络文本"},
+]
+
+# 官方组合（DATASET_COMBOS），一键勾选。
+COMBOS: dict[str, list[str]] = {
+    "cnn_nemotron_v2_mix": ["cnn_dailymail", "nemotron-post-training-dataset-v2"],
+    "nemotron-post-training-v3": [
+        "nemotron-sft-instruction-following-chat-v2",
+        "nemotron-science-v1",
+        "nemotron-competitive-programming-v1",
+        "nemotron-sft-agentic-v2",
+        "nemotron-math-v2",
+        "nemotron-sft-swe-v2",
+        "nemotron-sft-multilingual-v1",
+    ],
+}
+
+COMBO_DESC = {
+    "cnn_nemotron_v2_mix": "官方缺省组合（2 数据集）",
+    "nemotron-post-training-v3": "官方 Nemotron 后训练组合（7 数据集，NVFP4 常用）",
+}
+
+
+def builtin_dataset_keys() -> list[str]:
+    return [d["key"] for d in DATASETS]
+
+
+def dataset_label(key: str) -> str:
+    for d in DATASETS:
+        if d["key"] == key:
+            return f"{d['key']} — {d['desc']}"
+    if key in COMBOS:
+        return f"{key}（组合，{len(COMBOS[key])} 数据集）"
+    return key  # 自定义 HF 名 / 本地路径
+
+
+# ---------------------------------------------------------------- qformat 快照
+
+# 快照来自 modelopt_recipes/configs/ptq/presets/model/*.yaml（--qformat 词表）。
+QFORMAT_GROUPS: list[dict[str, object]] = [
+    {"name": "NVFP4 默认（W4A4）", "items": ["nvfp4", "nvfp4_fp8_mha", "nvfp4_four_over_six"]},
+    {"name": "NVFP4 权重范围（官方推荐档）",
+     "items": ["nvfp4_mlp_only", "nvfp4_experts_only", "nvfp4_omlp_only", "nvfp4_mlp_weight_only"]},
+    {"name": "NVFP4 混合精度",
+     "items": ["w4a16_nvfp4", "w4a8_nvfp4_fp8", "w4a8_mxfp4_fp8", "w4a8_awq_beta"]},
+    {"name": "NVFP4 校准算法增强",
+     "items": ["nvfp4_awq_lite", "nvfp4_awq_clip", "nvfp4_awq_full",
+               "nvfp4_w4a4_weight_mse_fp8_sweep", "nvfp4_w4a4_weight_local_hessian",
+               "nvfp4_svdquant"]},
+    {"name": "FP8", "items": ["fp8", "fp8_2d_blockwise_weight_only", "fp8_per_channel_per_token"]},
+    {"name": "INT8", "items": ["int8", "int8_weight_only", "int8_smoothquant"]},
+    {"name": "INT4", "items": ["int4_awq", "int4_blockwise_weight_only"]},
+    {"name": "MX 家族", "items": ["mxfp4", "mxfp4_mlp_weight_only", "mxfp6", "mxfp8", "mxint8"]},
+    {"name": "IQ 家族", "items": ["iq1_s", "iq1_m", "iq2_s", "iq2_xs", "iq2_xxs", "q8_0"]},
+    {"name": "Mamba-MoE",
+     "items": ["mamba_moe_nvfp4_aggressive", "mamba_moe_nvfp4_conservative",
+               "mamba_moe_fp8_aggressive", "mamba_moe_fp8_conservative"]},
+]
+
+KV_QFORMATS: list[str] = ["none", "fp8", "fp8_affine", "fp8_cast",
+                          "nvfp4", "nvfp4_affine", "nvfp4_cast", "nvfp4_rotate"]
+
+
+def all_qformats() -> list[str]:
+    return [i for g in QFORMAT_GROUPS for i in g["items"]]
+
+
+def kv_choices(kv: list[str] | None = None) -> list[tuple[str, str]]:
+    """kv 下拉 choices：(展示名, 实际值) 元组，与 qf_dd 形态一致。
+    保持纯字符串 choices 会在刷新前后形态不一，容易让前端把 (name, value)
+    对整体发回（"value not in choices" 报错）。"""
+    return [((f"none（不量化 KV）" if k == "none" else k), k) for k in (kv or KV_QFORMATS)]
+
+
+# ---------------------------------------------------------------- 远程动态刷新
+
+def fetch_remote_qformats(host: HostConfig) -> dict[str, object]:
+    """从远程仓库预设目录拉取 qformat / kv 词表。
+
+    Returns:
+        {"model": [names...], "kv": [names...], "source": "remote|snapshot", "error": ""}
+    """
+    sub = {"model": "modelopt_recipes/configs/ptq/presets/model",
+           "kv": "modelopt_recipes/configs/ptq/presets/kv"}
+    out: dict[str, object] = {"source": "remote", "error": ""}
+    try:
+        for kind, d in sub.items():
+            r, o, e = run_remote(
+                host,
+                f"ls {d} 2>/dev/null | grep -E '\\.(yaml|yml)$' | sed 's/\\..*//' | sort",
+                timeout=20,
+            )
+            if r != 0 or not o.strip():
+                raise RuntimeError(f"远程目录不可读: {d} ({e or o})")
+            out[kind] = o.split()
+        return out
+    except Exception as ex:  # noqa: BLE001 - 快照兜底
+        return {"model": all_qformats(), "kv": list(KV_QFORMATS),
+                "source": "snapshot", "error": str(ex)}
+
+
+def fetch_remote_datasets(host: HostConfig) -> dict[str, object]:
+    """从远程仓库解析数据集注册表与组合（纯文本解析，不 import modelopt）。"""
+    r, src, e = run_remote(
+        host,
+        f"cat {host.remote_repo}/modelopt/torch/utils/dataset_utils.py 2>/dev/null",
+        timeout=20,
+    )
+    out: dict[str, object] = {"source": "remote", "error": ""}
+    if r != 0 or "SUPPORTED_DATASET_CONFIG" not in src:
+        return {"datasets": builtin_dataset_keys(), "combos": dict(COMBOS),
+                "source": "snapshot", "error": e or "解析失败"}
+    i = src.find("SUPPORTED_DATASET_CONFIG")
+    j = src.find("}", i)
+    block = src[i:j if j > 0 else i + 8000]
+    keys = [k for k in re.findall(r'^\s{4}"([^"]+)"\s*:', block, re.M)]
+    i = src.find("DATASET_COMBOS")
+    j = src.find("}", src.find("]", i))
+    combos_block = src[i:j if j > 0 else i + 2000]
+    combos = dict(re.findall(r'(?m)^\s{4}"([^"]+)":\s*\[(.*?)\]', combos_block))
+    combos = {k: re.findall(r'"([^"]+)"', v) for k, v in combos.items()}
+    if not keys:
+        return {"datasets": builtin_dataset_keys(), "combos": dict(COMBOS),
+                "source": "snapshot", "error": "解析失败"}
+    return {"datasets": keys, "combos": combos, "source": "remote"}
+
+
+def render_qformat_dropdown(options: list[str], groups: list[dict[str, object]] | None = None) -> list[tuple[str, str]]:
+    """把 qformat 列表转成 Gradio choices [(展示名, 实际值), ...]，带分组注释。"""
+    choices: list[tuple[str, str]] = []
+    if groups is None:
+        groups = QFORMAT_GROUPS
+    seen: set[str] = set()
+    for g in groups:
+        for item in g["items"]:
+            if item in options and item not in seen:
+                choices.append((f"[{g['name']}] {item}", item))
+                seen.add(item)
+    # 远程刷新后可能出现的新 preset（快照分组里没列到的）
+    for item in options:
+        if item not in seen:
+            choices.append((f"[远程新增] {item}", item))
+    return choices
