@@ -205,10 +205,11 @@ export interface LocalModel {
   stub: boolean
 }
 
-/** GET /api/artifacts（C1 最小版） */
+/** GET /api/artifacts（C1 完整版：模型名/qformat 从 job.json.cmd 或 run.log 首行提取） */
 export interface Artifact {
   dir: string
   model: string
+  qformat: string
   ts: string
   size: string
   state: string

@@ -1,11 +1,17 @@
 /**
- * 产物库区（C1 最小版）：GET /api/artifacts → 卡片列表（dir/model/ts/size/state 徽章）。
- * vLLM 启动命令模板与完整产物库 = Plan 4，顶部只放占位条。
+ * 产物库区（C1 完整版）：GET /api/artifacts → 卡片列表
+ * （模型名 / qformat 徽章 / 时间 / 大小 / 路径 / state 徽章）
+ * + 「生成 vLLM 启动命令」纯前端模板拼串 + 复制。
+ *
+ * 模板（设计稿 §8）：
+ *   vllm serve <abs_export_dir> --served-model-name <slug> --dtype auto --gpu-memory-utilization 0.9
+ * abs_export_dir = task_dir + '/' + dir；展示层把 `~` 展开成 $HOME，其余原样。
  */
 import { useEffect, useState } from 'react'
-import { Boxes, RefreshCw } from 'lucide-react'
+import { Boxes, Copy, RefreshCw, TerminalSquare } from 'lucide-react'
 import { api } from '../api/endpoints'
-import type { Artifact } from '../api/types'
+import { useToast } from '../components/ToastProvider'
+import type { Artifact, Bootstrap } from '../api/types'
 
 function stateBadge(state: string) {
   switch (state) {
@@ -33,7 +39,94 @@ function stateLabel(state: string) {
   }
 }
 
-export default function ArtifactsView() {
+/** task_dir（可能带 ~）拼出绝对导出目录；展示层 ~ → $HOME。 */
+function absExportDir(taskDir: string, dir: string): string {
+  const base = (taskDir || '').replace(/^~(?=[/\\]|$)/, '$HOME')
+  return `${base.replace(/\/+$/, '')}/${dir}`
+}
+
+/** served-model-name：模型名把 / 换成 -；没有模型名退回目录名。 */
+function slugOf(a: Artifact): string {
+  return (a.model || a.dir).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || a.dir
+}
+
+function buildVllmCmd(a: Artifact, taskDir: string): string {
+  return (
+    `vllm serve ${absExportDir(taskDir, a.dir)} ` +
+    `--served-model-name ${slugOf(a)} --dtype auto --gpu-memory-utilization 0.9`
+  )
+}
+
+function ArtifactCard({ a, taskDir }: { a: Artifact; taskDir: string }) {
+  const toast = useToast()
+  const [cmd, setCmd] = useState<string | null>(null)
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.show('已复制命令')
+    } catch {
+      toast.show('复制失败', 'error')
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[12.5px] text-slate-200 truncate" title={a.dir}>
+          {a.dir}
+        </span>
+        <span className={`px-2 py-0.5 rounded-md text-[11px] shrink-0 ${stateBadge(a.state)}`}>
+          {stateLabel(a.state)}
+        </span>
+      </div>
+      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
+        <span className="text-slate-500">模型</span>
+        <span className="font-mono text-slate-400 truncate" title={a.model}>
+          {a.model || '—'}
+        </span>
+        <span className="text-slate-500">格式</span>
+        {a.qformat ? (
+          <span className="px-1.5 py-px rounded bg-cyan-500/10 text-cyan-300 font-mono">
+            {a.qformat}
+          </span>
+        ) : (
+          <span className="text-slate-600">—</span>
+        )}
+        <span className="text-slate-500">时间</span>
+        <span className="font-mono text-slate-400">{a.ts || '—'}</span>
+        <span className="text-slate-500">大小</span>
+        <span className="font-mono text-slate-400">{a.size || '—'}</span>
+        <span className="text-slate-500">路径</span>
+        <span className="font-mono text-slate-400 truncate" title={absExportDir(taskDir, a.dir)}>
+          {taskDir ? absExportDir(taskDir, a.dir) : '—'}
+        </span>
+      </div>
+      <button
+        onClick={() => setCmd(cmd === null ? buildVllmCmd(a, taskDir) : null)}
+        className="mt-1 flex items-center gap-1 text-[11.5px] text-cyan-400 hover:text-cyan-300"
+      >
+        <TerminalSquare size={12} /> {cmd === null ? '生成 vLLM 启动命令' : '收起命令'}
+      </button>
+      {cmd !== null && (
+        <div className="relative group">
+          <pre className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11.5px] font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap break-all">
+            {cmd}
+          </pre>
+          <button
+            onClick={() => void copy(cmd)}
+            title="复制命令"
+            className="absolute top-1.5 right-1.5 p-1 rounded-md bg-slate-800 text-slate-400 hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <Copy size={12} />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function ArtifactsView({ data }: { data: Bootstrap | null }) {
   const [list, setList] = useState<Artifact[] | null>(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
@@ -54,13 +147,10 @@ export default function ArtifactsView() {
 
   useEffect(() => { void load() }, [])
 
+  const taskDir = data?.paths?.task_dir ?? ''
+
   return (
     <div className="max-w-4xl space-y-4">
-      {/* 占位条：完整产物库（vLLM 命令模板/下载/清理）在 Plan 4 */}
-      <div className="px-4 py-2.5 rounded-xl bg-cyan-500/8 border border-cyan-500/20 text-[12px] text-cyan-300/90">
-        vLLM 启动命令模板、产物下载与清理 = Plan 4，当前仅展示 task_dir 产物列表。
-      </div>
-
       <section className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-[12px] font-semibold text-slate-400 tracking-wide uppercase">
@@ -92,28 +182,7 @@ export default function ArtifactsView() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {list!.map((a) => (
-              <div key={a.dir} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-[12.5px] text-slate-200 truncate" title={a.dir}>
-                    {a.dir}
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-md text-[11px] shrink-0 ${stateBadge(a.state)}`}
-                  >
-                    {stateLabel(a.state)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
-                  <span className="text-slate-500">模型</span>
-                  <span className="font-mono text-slate-400 truncate" title={a.model}>
-                    {a.model || '—'}
-                  </span>
-                  <span className="text-slate-500">时间</span>
-                  <span className="font-mono text-slate-400">{a.ts || '—'}</span>
-                  <span className="text-slate-500">大小</span>
-                  <span className="font-mono text-slate-400">{a.size || '—'}</span>
-                </div>
-              </div>
+              <ArtifactCard key={a.dir} a={a} taskDir={taskDir} />
             ))}
           </div>
         )}

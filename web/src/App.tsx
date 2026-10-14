@@ -67,7 +67,7 @@ export default function App() {
             ) : view === 'recipe' ? (
               <RecipeView data={data} />
             ) : view === 'artifacts' ? (
-              <ArtifactsView />
+              <ArtifactsView data={data} />
             ) : (
               <SettingsView data={data} onSaved={() => void reload()} />
             )}

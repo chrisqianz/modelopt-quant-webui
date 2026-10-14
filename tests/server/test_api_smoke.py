@@ -308,21 +308,44 @@ def test_artifacts(client, tmp_path):
     assert len(out) == 1
     assert out[0]["dir"] == "quant_x_20240101"
     assert out[0]["state"] == "manual"
+    assert out[0]["model"] == ""
+    assert out[0]["qformat"] == ""
     assert out[0]["size"] == "1.2G"
 
 
 def test_artifacts_with_job_json(client, tmp_path):
+    """job.json.cmd 里能提取模型名与 qformat（C1 完整版）。"""
     tasks = tmp_path / "tasks"
     d = tasks / "eval_y_20240202"
     d.mkdir(parents=True)
     (d / "run.log").write_text("log\n")
-    (d / "job.json").write_text(json.dumps({"state": "done", "export_dir": str(tmp_path / "q"), "started_at": 1700000000}))
+    cmd = ("cd /repo && /venv/bin/python examples/hf_ptq/hf_ptq.py "
+           "--pyt_ckpt_path org/Qwen3-8B --qformat nvfp4 --dataset cnn_dailymail")
+    (d / "job.json").write_text(json.dumps({"state": "done", "cmd": cmd,
+                                            "started_at": 1700000000}))
     r = client.get("/api/artifacts")
     out = r.json()["artifacts"]
     assert len(out) == 1
     assert out[0]["state"] == "done"
-    assert out[0]["model"] == str(tmp_path / "q")
+    assert out[0]["model"] == "org/Qwen3-8B"
+    assert out[0]["qformat"] == "nvfp4"
     assert out[0]["ts"] == "1700000000"
+
+
+def test_artifacts_manual_runlog_cmd(client, tmp_path):
+    """manual 产物（无 job.json）：从 run.log 首行提取模型名/qformat。"""
+    tasks = tmp_path / "tasks"
+    d = tasks / "manual_m_20240303"
+    d.mkdir(parents=True)
+    (d / "run.log").write_text(
+        "/venv/bin/python examples/hf_ptq/hf_ptq.py --pyt_ckpt_path ~/models/Llama-3.1-8B "
+        "--qformat int4_awq --dataset cnn_dailymail\nlog line2\n")
+    r = client.get("/api/artifacts")
+    out = r.json()["artifacts"]
+    assert len(out) == 1
+    assert out[0]["state"] == "manual"
+    assert out[0]["model"] == "~/models/Llama-3.1-8B"
+    assert out[0]["qformat"] == "int4_awq"
 
 
 def test_artifacts_empty_dir(client):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -253,7 +254,11 @@ def models_local() -> dict:
 
 @router.get("/artifacts")
 def artifacts() -> dict:
-    """task_dir 下的产物目录（有 run.log 才算一个任务产物）。"""
+    """task_dir 下的产物目录（有 run.log 才算一个任务产物）。
+
+    qformat / model 名从 job.json.cmd（manual 产物从 run.log 首行）正则提取；
+    `model` 字段存模型名（--pyt_ckpt_path），取不到留空，`dir` 是目录名。
+    """
     base = Path(CFG.local.task_dir).expanduser()
     if not base.exists():
         return {"artifacts": []}
@@ -262,18 +267,34 @@ def artifacts() -> dict:
         if not d.is_dir() or not (d / "run.log").exists():
             continue
         state, model, ts = "manual", "", ""
+        qformat = ""
+        cmd = ""
         jj = d / "job.json"
         if jj.exists():
             try:
                 meta = json.loads(jj.read_text())
                 state = meta.get("state", "manual")
-                model = meta.get("export_dir", "")
                 ts = meta.get("started_at", "")
+                cmd = meta.get("cmd", "")
             except (OSError, ValueError):
                 pass   # job.json 半截/脏数据：当手动产物处理，不炸列表
-        out.append({"dir": d.name, "model": model, "ts": str(ts),
-                    "size": _du_size(d), "state": state})
+        if not cmd:   # manual 产物：run.log 首行是完整命令
+            try:
+                with open(d / "run.log", "rb") as f:
+                    cmd = f.readline().decode(errors="replace")
+            except OSError:
+                cmd = ""
+        qformat = _first_match(r"--qformat (\S+)", cmd)
+        model = _first_match(r"--pyt_ckpt_path (\S+)", cmd)
+        out.append({"dir": d.name, "model": model, "qformat": qformat,
+                    "ts": str(ts), "size": _du_size(d), "state": state})
     return {"artifacts": out}
+
+
+def _first_match(pattern: str, text: str) -> str:
+    """首个正则匹配组，取不到返回空串。"""
+    m = re.search(pattern, text or "")
+    return m.group(1) if m else ""
 
 
 # ---------------------------------------------------------------- 写端点（Task 6）
