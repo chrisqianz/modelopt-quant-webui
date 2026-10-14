@@ -33,9 +33,9 @@
 
 ## Task 0 — 建目录与本计划落盘
 
-- [ ] `mkdir -p tests/fixtures docs/superpowers/plans`
-- [ ] 确认本文件在 `docs/superpowers/plans/`（要入库，不放 gitignore 的 `.superpowers/`）
-- [ ] Commit: `git add docs/superpowers/plans && git commit -m "docs: Plan 1 后端去 SSH 化 + 部署通道"`
+- [x] `mkdir -p tests/fixtures docs/superpowers/plans`
+- [x] 确认本文件在 `docs/superpowers/plans/`（要入库，不放 gitignore 的 `.superpowers/`）
+- [x] Commit: `git add docs/superpowers/plans && git commit -m "docs: Plan 1 后端去 SSH 化 + 部署通道"`
 
 ---
 
@@ -43,9 +43,9 @@
 
 **Files:** `tests/golden_adapter.py`、`tests/test_golden_command.py`、`tests/fixtures/lm_eval_sample.json`
 
-- [ ] 装 pytest：`.venv/bin/pip install pytest` → `echo "pytest" >> requirements.txt`
+- [x] 装 pytest：`.venv/bin/pip install pytest` → `echo "pytest" >> requirements.txt`
 
-- [ ] 写 `tests/fixtures/lm_eval_sample.json`（lm-eval 输出形状，够 `_result_tables` 用）：
+- [x] 写 `tests/fixtures/lm_eval_sample.json`（lm-eval 输出形状，够 `_result_tables` 用）：
 
 ```json
 {
@@ -57,7 +57,7 @@
 }
 ```
 
-- [ ] 写 `tests/golden_adapter.py` —— **这一层是唯一允许在后续 Task 里改的测试代码**：
+- [x] 写 `tests/golden_adapter.py` —— **这一层是唯一允许在后续 Task 里改的测试代码**：
 
 ```python
 """把「当前代码怎么拼命令」包一层，重构时只改这里，fixture 不动。
@@ -91,7 +91,7 @@ def assemble_tables(results: list[dict]) -> list[list[str]]:
     return rows
 ```
 
-- [ ] 写参数用例 `tests/cases.py`（**不含 host_name**，位置参数由 adapter 按 `INPUT_ORDER` 补齐）：
+- [x] 写参数用例 `tests/cases.py`（**不含 host_name**，位置参数由 adapter 按 `INPUT_ORDER` 补齐）：
 
 ```python
 """量化参数用例。keys 用 INPUT_ORDER 里的名字，adapter 负责按位置展开。"""
@@ -144,7 +144,7 @@ EVAL_CASES: dict[str, dict] = {
 }
 ```
 
-- [ ] adapter 里加用例 → 位置参数的换算（`sizes` dict 按 `sizes_names` 顺序展开成 `sizes_table` 行；`host_name` 插在最前），补进 `tests/golden_adapter.py`：
+- [x] adapter 里加用例 → 位置参数的换算（`sizes` dict 按 `sizes_names` 顺序展开成 `sizes_table` 行；`host_name` 插在最前），补进 `tests/golden_adapter.py`：
 
 ```python
 def quantize_args(c: dict) -> list:
@@ -158,7 +158,7 @@ def quantize_args(c: dict) -> list:
 
 > `INPUT_ORDER` 里的名字与用例 keys 必须一一对上；跑第一条测试前用 `print(app.INPUT_ORDER)` 核一遍，缺哪个补哪个（用例少 key 会让 `build_params` 取到 `None`，命令串就变了）。
 
-- [ ] 写 `tests/test_golden_command.py`：
+- [x] 写 `tests/test_golden_command.py`：
 
 ```python
 import json
@@ -211,7 +211,7 @@ def test_result_tables(update):
     assert want == _load("result_tables")
 ```
 
-- [ ] 加 `--update-golden` 选项，写 `tests/conftest.py`：
+- [x] 加 `--update-golden` 选项，写 `tests/conftest.py`：
 
 ```python
 def pytest_addoption(parser):
@@ -219,9 +219,9 @@ def pytest_addoption(parser):
                      help="重写 golden/*.json（只在故意改行为时用，改完看 diff）")
 ```
 
-- [ ] 加空 `tests/__init__.py`（让 `from tests import ...` 成立）
+- [x] 加空 `tests/__init__.py`（让 `from tests import ...` 成立）
 
-- [ ] 生成快照并**人眼过一遍**命令串：
+- [x] 生成快照并**人眼过一遍**命令串：
 
 ```bash
 .venv/bin/pytest tests/test_golden_command.py --update-golden -q
@@ -231,8 +231,8 @@ cat tests/golden/quantize_cmd.json
 Expected: 三条命令都以 `cd <repo> && <venv>/bin/python examples/hf_ptq/hf_ptq.py` 开头；用例 2 含 `--recipe` 而不是 `--qformat`、含 `--dataset 'cnn_dailymail,open_platypus,mysite' --calib_size '512,256,128'`、含 `--use_fsdp2 --cpu_offload --low_memory_mode`、`--gpu_max_mem_percentage 0.9`；用例 3 无 `--kv_cache_qformat`。
 若与预期不符，**先查是不是 `INPUT_ORDER` 对齐错了**，不要改 `app.py`。
 
-- [ ] 再跑一次（不带 flag）确认稳定：`.venv/bin/pytest -q` → Expected `3 passed`
-- [ ] Commit: `git add tests requirements.txt && git commit -m "test: 锁死量化/评测命令串的 golden 快照（改代码前的安全网）"`
+- [x] 再跑一次（不带 flag）确认稳定：`.venv/bin/pytest -q` → Expected `3 passed`
+- [x] Commit: `git add tests requirements.txt && git commit -m "test: 锁死量化/评测命令串的 golden 快照（改代码前的安全网）"`
 
 ---
 
@@ -240,7 +240,7 @@ Expected: 三条命令都以 `cd <repo> && <venv>/bin/python examples/hf_ptq/hf_
 
 **Files:** `webui/config.py`（重写）、`config.yaml`、`hosts.json`（删）
 
-- [ ] `config.yaml` 全文替换为（`local:` 新增、`network` 去掉 `remote_proxy`、注释不再提 SSH）：
+- [x] `config.yaml` 全文替换为（`local:` 新增、`network` 去掉 `remote_proxy`、注释不再提 SSH）：
 
 ```yaml
 # ModelOpt 量化 WebUI 配置
@@ -272,7 +272,7 @@ defaults:
   kv_cache_qformat: none
 ```
 
-- [ ] `webui/config.py` 重写。删掉：`HOSTS_JSON`、`MODE_LOCAL`/`MODE_REMOTE`/`EXEC_MODES`、`HostConfig`、`_SEED`、`load_hosts`、`save_hosts`、`hosts_from_dicts`、`NetConfig.remote_proxy`。新增/改动如下（`PROXY_*`、`_read_state`、`_write_state`、`load_net`、`save_net` 保留，`_write_state` 的 `chmod 600` 保留）：
+- [x] `webui/config.py` 重写。删掉：`HOSTS_JSON`、`MODE_LOCAL`/`MODE_REMOTE`/`EXEC_MODES`、`HostConfig`、`_SEED`、`load_hosts`、`save_hosts`、`hosts_from_dicts`、`NetConfig.remote_proxy`。新增/改动如下（`PROXY_*`、`_read_state`、`_write_state`、`load_net`、`save_net` 保留，`_write_state` 的 `chmod 600` 保留）：
 
 ```python
 PROJECT_ROOT = CONFIG_DIR          # config.yaml 所在目录就是项目根
@@ -349,10 +349,10 @@ def _seed_net(d: dict) -> NetConfig:
     return NetConfig(mode=mode, proxy=str(proxy))
 ```
 
-- [ ] 删文件：`git rm -f hosts.json`（若本地不存在则 `rm -f hosts.json`）
-- [ ] 冒烟：`.venv/bin/python -c "from webui.config import load_config, resolve_relative as r; c=load_config(); print(c.server_port, c.local.venv_path, c.net.mode, repr(c.net.proxy))"`
+- [x] 删文件：`git rm -f hosts.json`（若本地不存在则 `rm -f hosts.json`）
+- [x] 冒烟：`.venv/bin/python -c "from webui.config import load_config, resolve_relative as r; c=load_config(); print(c.server_port, c.local.venv_path, c.net.mode, repr(c.net.proxy))"`
       Expected: 第二项是 `/Users/chrisqian/Development/modelopt-quant-webui/.venvs/modelopt`（绝对、项目内），不含 `~`
-- [ ] Commit: `git commit -am "refactor(config): HostConfig/hosts.json → LocalConfig/config.yaml local 段，venv 挪进项目内"`
+- [x] Commit: `git commit -am "refactor(config): HostConfig/hosts.json → LocalConfig/config.yaml local 段，venv 挪进项目内"`
 
 > Task 2–5 之间 `app.py` 会 import 失败（引用了删掉的 `HostConfig` 等），属预期，**不要在中间提交**。
 
@@ -378,8 +378,8 @@ def _seed_net(d: dict) -> NetConfig:
 
 改动清单：
 
-- [ ] 顶部 import：删 `getpass`、`hashlib`、`tempfile`（只被 SSH 段用；`shlex`/`os`/`time`/`json`/`re`/`subprocess` 保留），docstring 去掉「远程 SSH 执行器」
-- [ ] `q_remote(path, host=None)`（L37）→ 签名去 host，实现就是展开 + 转义：
+- [x] 顶部 import：删 `getpass`、`hashlib`、`tempfile`（只被 SSH 段用；`shlex`/`os`/`time`/`json`/`re`/`subprocess` 保留），docstring 去掉「远程 SSH 执行器」
+- [x] `q_remote(path, host=None)`（L37）→ 签名去 host，实现就是展开 + 转义：
 
 ```python
 def q_remote(path: str | Path) -> str:
@@ -388,9 +388,9 @@ def q_remote(path: str | Path) -> str:
     return shlex.quote(str(p.expanduser()))
 ```
 
-- [ ] `remote_home(host)`（L53）→ 删掉，调用点全部换成 `q_remote` 或直接 `os.path.expanduser("~")`
-- [ ] `_exec`（L244）保留原样 —— 它是唯一的进程执行原语
-- [ ] `run_remote(host, cmd, timeout)`（L253）→ 改名 `run_shell(cmd, timeout)`，body 一行：
+- [x] `remote_home(host)`（L53）→ 删掉，调用点全部换成 `q_remote` 或直接 `os.path.expanduser("~")`
+- [x] `_exec`（L244）保留原样 —— 它是唯一的进程执行原语
+- [x] `run_remote(host, cmd, timeout)`（L253）→ 改名 `run_shell(cmd, timeout)`，body 一行：
 
 ```python
 def run_shell(cmd: str, timeout: int = 60) -> tuple[int, str, str]:
@@ -399,8 +399,8 @@ def run_shell(cmd: str, timeout: int = 60) -> tuple[int, str, str]:
 ```
 
 调用点全量替换（`app.py` + `webui/*.py` 共 40 处）：`run_remote(` → `run_shell(`，并把首参 `host,` 去掉。
-- [ ] `run_local`（L275，只有 SSH 路径在用）→ 删
-- [ ] `check_connection`（L218）→ 只留本机分支，语义变成「shell 可用 + 主机名」：
+- [x] `run_local`（L275，只有 SSH 路径在用）→ 删
+- [x] `check_connection`（L218）→ 只留本机分支，语义变成「shell 可用 + 主机名」：
 
 ```python
 def check_connection() -> str:
@@ -411,13 +411,13 @@ def check_connection() -> str:
     return f"✓ 本机执行可用 · {body}"
 ```
 
-- [ ] `HostStatus`（L283）删 `auth` 字段；`as_dict()` 里对应中文键「认证」一并删（`reachable/gpu/gpu_util/gpu_mem/gpu_busy/repo_ok/venv_ok/uv_ok/disk_free/hf_cache/hf_direct_ok/hf_proxy_ok/proxy_note/error` 全留）
-- [ ] `probe_hf`（L326）：`run_remote(host, ...)` → `run_shell(...)`；错误文案 `return _ssh_error(err)` → `return f"✗ 探测失败：{(err or out)[:200]}"`
-- [ ] `probe_host(host, app_cfg)`（L356）→ `probe_host(cfg: AppConfig)`：
+- [x] `HostStatus`（L283）删 `auth` 字段；`as_dict()` 里对应中文键「认证」一并删（`reachable/gpu/gpu_util/gpu_mem/gpu_busy/repo_ok/venv_ok/uv_ok/disk_free/hf_cache/hf_direct_ok/hf_proxy_ok/proxy_note/error` 全留）
+- [x] `probe_hf`（L326）：`run_remote(host, ...)` → `run_shell(...)`；错误文案 `return _ssh_error(err)` → `return f"✗ 探测失败：{(err or out)[:200]}"`
+- [x] `probe_host(host, app_cfg)`（L356）→ `probe_host(cfg: AppConfig)`：
   - 开头 `reachable` 走 `check_connection()`；删 `st.auth = host.auth_kind`
   - 路径判断：`test -d {repo}/examples/hf_ptq` 的 `repo` 用 `q_remote(cfg.local.repo)`；venv 用 `cfg.local.venv`；`df -h` 与 `du -sh` 用 `cfg.local.hf_cache`
   - 删 `ensure_hf_tunnel` / `_TUNNELS` 那段（AUTO 分支），改成：`mode == PROXY_AUTO` 且 `cfg.net.proxy` 非空 → 探测代理；为空则 `proxy_note = "未配置代理地址（设置里填）"`
-- [ ] `proxy_url_for(app_cfg, host)`（L483）→ `proxy_url_for(cfg: AppConfig) -> tuple[str, str]`，只剩一条路：
+- [x] `proxy_url_for(app_cfg, host)`（L483）→ `proxy_url_for(cfg: AppConfig) -> tuple[str, str]`，只剩一条路：
 
 ```python
 def proxy_url_for(cfg: AppConfig) -> tuple[str, str]:
@@ -434,11 +434,11 @@ def proxy_url_for(cfg: AppConfig) -> tuple[str, str]:
     return url, f"直连不通，走 {url}"
 ```
 
-- [ ] `proxy_for`（L509）、`test_proxy`（L515）同步去 host；`test_proxy` 三模式各自 `probe_hf` 的结构保留，`host` 参数删
-- [ ] `ensure_venv`（L554）/ `ensure_eval_env`（L585）：命令里的 `{venv}` 换成 `resolve_relative(cfg.local.venv)`，其余（`uv venv … --python 3.12` + `VIRTUAL_ENV=… uv pip install -e '.[hf]'`、marker `VENV_DONE`、评测环境钉 `'vllm>=0.10.1' 'lm_eval[ifeval]>=0.4.12,<0.5'` + marker `EVAL_ENV_DONE`）一字不动
-- [ ] `Task`（L679）删 `host` 字段；`start_task`（L692）、`start_script_task`（L712）、`poll_task`（L743）、`read_log`（L752）、`remote_tail`（L756）、`abort_task`（L777）、`export_file_listing`（L786）去掉 `host` 形参，内部 `run_remote(host, …)` → `run_shell(…)`。`remote_tail` 改名 `tail_log(path, tail_bytes)`
-- [ ] `_proxy_env(proxy)`（L541）、`normalize_proxy`（L419）、`_parse_proxy_addr`（L433）、`_resolve_uv`（L549）、`_wait_for_marker`（L611）、`probe_eval_env`（L626）、`fetch_eval_results`（L642）逻辑保留，只去 host 参数
-- [ ] 语法与残留检查：
+- [x] `proxy_for`（L509）、`test_proxy`（L515）同步去 host；`test_proxy` 三模式各自 `probe_hf` 的结构保留，`host` 参数删
+- [x] `ensure_venv`（L554）/ `ensure_eval_env`（L585）：命令里的 `{venv}` 换成 `resolve_relative(cfg.local.venv)`，其余（`uv venv … --python 3.12` + `VIRTUAL_ENV=… uv pip install -e '.[hf]'`、marker `VENV_DONE`、评测环境钉 `'vllm>=0.10.1' 'lm_eval[ifeval]>=0.4.12,<0.5'` + marker `EVAL_ENV_DONE`）一字不动
+- [x] `Task`（L679）删 `host` 字段；`start_task`（L692）、`start_script_task`（L712）、`poll_task`（L743）、`read_log`（L752）、`remote_tail`（L756）、`abort_task`（L777）、`export_file_listing`（L786）去掉 `host` 形参，内部 `run_remote(host, …)` → `run_shell(…)`。`remote_tail` 改名 `tail_log(path, tail_bytes)`
+- [x] `_proxy_env(proxy)`（L541）、`normalize_proxy`（L419）、`_parse_proxy_addr`（L433）、`_resolve_uv`（L549）、`_wait_for_marker`（L611）、`probe_eval_env`（L626）、`fetch_eval_results`（L642）逻辑保留，只去 host 参数
+- [x] 语法与残留检查：
 
 ```bash
 .venv/bin/python -m py_compile webui/runner.py
@@ -446,7 +446,7 @@ grep -nE "ssh|sshpass|ControlMaster|is_local|remote_repo|_TUNNELS|_MASTER_OK|run
 ```
 
 Expected: `grep` 只剩注释里的历史说明（应该 0 命中最好；命中的每一行都要么改名要么加一句「历史：原 SSH 时代」再确认读不出任何 SSH 调用）
-- [ ] Commit: `git commit -am "refactor(runner): 删除 SSH/ControlMaster/反向隧道，执行层拉平成单路径本机执行"`
+- [x] Commit: `git commit -am "refactor(runner): 删除 SSH/ControlMaster/反向隧道，执行层拉平成单路径本机执行"`
 
 ---
 
@@ -456,13 +456,13 @@ Expected: `grep` 只剩注释里的历史说明（应该 0 命中最好；命中
 
 > **写这一节时计划里对这两个函数的描述是错的**（说成 grep `config.py` 的 `choices=[...]`）。下面按读过的真实代码重写。数据源、命令文本、返回结构全部保持不变 —— 本 Task 只做两件事：**去掉 host 参数走本机 shell** + **补上缺失的仓库绝对路径**。
 
-- [ ] **先修一个既有 BUG（BUG 3，只有本机模式下才会暴露）**：`vocab.py:112 fetch_remote_qformats` 发的命令是 `ls modelopt_recipes/configs/ptq/presets/model ...`（相对路径），而原 `run_remote` 从不 `cd` 进仓库（只有 `build_remote_cmd` 在自己的命令串里 `cd {repo} &&`）⇒ 这条 `ls` 一直在 `$HOME` 里执行，必然非 0 / 空 ⇒ `raise RuntimeError` ⇒ **永远走 `source: "snapshot"` 兜底**，「刷新词表」从来没生效过，下拉里一直是硬编码快照。`fetch_remote_datasets` 用的是 `cat {host.remote_repo}/...` 绝对路径，所以只有它是好的。修法：路径前缀补上仓库根（绝对路径 + `shlex.quote`）。
-- [ ] `vocab.fetch_remote_qformats(host)`（L112-134）→ `scan_qformats(repo) -> dict[str, object]`：命令文本照搬，只把 `run_remote(host, cmd, timeout=20)` 换成 `run_shell(cmd, timeout=20)`，`d` 换成 `shlex.quote(str(Path(repo) / d))`。**返回结构一字不改**：`{"model": [...], "kv": [...], "source": "remote|snapshot", "error": ""}`，兜底仍是 `{"model": all_qformats(), "kv": list(KV_QFORMATS), "source": "snapshot", "error": str(ex)}`
-- [ ] `vocab.fetch_remote_datasets(host)`（L137-160）→ `scan_datasets(repo) -> dict[str, object]`：`cat` 的路径由 `{host.remote_repo}/modelopt/torch/utils/dataset_utils.py` 改成 `shlex.quote(str(Path(repo) / "modelopt/torch/utils/dataset_utils.py"))`，`run_remote` → `run_shell`；`SUPPORTED_DATASET_CONFIG` / `DATASET_COMBOS` 两段正则**逐行照搬不动**；返回结构不变（`datasets` / `combos` / `source` / `error`）
-- [ ] `vocab.render_qformat_dropdown`（L163）、`all_qformats`（L99）、`kv_choices`（L103）、`builtin_dataset_keys`（L59）、`dataset_label`（L63）不动
-- [ ] `validate.fetch_remote_export(host, log_tail, export_dir_hint)`（L54-79）→ `scan_export_dir(log_tail, export_dir_hint="") -> QuantSummary`：定位导出目录的正则 `Quantized model exported to:\s*(\S+)` + `.rstrip(".")` + 回落 `export_dir_hint` 全部照搬；两处 `q_remote(target, host)` 换成 `shlex.quote(target)`、`run_remote` 换 `run_shell`。**不要改成 `Path.iterdir()` 自造文件清单** —— `s.files` 现在是 `ls -lh … | awk '{print $5,$9}' | head -30` 的原文，UI 表格直接显示它，换成 Python 格式化会让尺寸显示口径变样（`4.0G` vs 字节数），本 Task 不带这个改动
-- [ ] `app.py` 调用点同步（`do_refresh` L941 / `initial_probe` L973 / `do_validate` L1086），参数传 `CFG.local.repo_path`；`source == "snapshot"` 时的提示文案不动
-- [ ] 冒烟（mac 上没有 `~/Model-Optimizer`，所以这里应该看到兜底，这是对的）：
+- [x] **先修一个既有 BUG（BUG 3，只有本机模式下才会暴露）**：`vocab.py:112 fetch_remote_qformats` 发的命令是 `ls modelopt_recipes/configs/ptq/presets/model ...`（相对路径），而原 `run_remote` 从不 `cd` 进仓库（只有 `build_remote_cmd` 在自己的命令串里 `cd {repo} &&`）⇒ 这条 `ls` 一直在 `$HOME` 里执行，必然非 0 / 空 ⇒ `raise RuntimeError` ⇒ **永远走 `source: "snapshot"` 兜底**，「刷新词表」从来没生效过，下拉里一直是硬编码快照。`fetch_remote_datasets` 用的是 `cat {host.remote_repo}/...` 绝对路径，所以只有它是好的。修法：路径前缀补上仓库根（绝对路径 + `shlex.quote`）。
+- [x] `vocab.fetch_remote_qformats(host)`（L112-134）→ `scan_qformats(repo) -> dict[str, object]`：命令文本照搬，只把 `run_remote(host, cmd, timeout=20)` 换成 `run_shell(cmd, timeout=20)`，`d` 换成 `shlex.quote(str(Path(repo) / d))`。**返回结构一字不改**：`{"model": [...], "kv": [...], "source": "remote|snapshot", "error": ""}`，兜底仍是 `{"model": all_qformats(), "kv": list(KV_QFORMATS), "source": "snapshot", "error": str(ex)}`
+- [x] `vocab.fetch_remote_datasets(host)`（L137-160）→ `scan_datasets(repo) -> dict[str, object]`：`cat` 的路径由 `{host.remote_repo}/modelopt/torch/utils/dataset_utils.py` 改成 `shlex.quote(str(Path(repo) / "modelopt/torch/utils/dataset_utils.py"))`，`run_remote` → `run_shell`；`SUPPORTED_DATASET_CONFIG` / `DATASET_COMBOS` 两段正则**逐行照搬不动**；返回结构不变（`datasets` / `combos` / `source` / `error`）
+- [x] `vocab.render_qformat_dropdown`（L163）、`all_qformats`（L99）、`kv_choices`（L103）、`builtin_dataset_keys`（L59）、`dataset_label`（L63）不动
+- [x] `validate.fetch_remote_export(host, log_tail, export_dir_hint)`（L54-79）→ `scan_export_dir(log_tail, export_dir_hint="") -> QuantSummary`：定位导出目录的正则 `Quantized model exported to:\s*(\S+)` + `.rstrip(".")` + 回落 `export_dir_hint` 全部照搬；两处 `q_remote(target, host)` 换成 `shlex.quote(target)`、`run_remote` 换 `run_shell`。**不要改成 `Path.iterdir()` 自造文件清单** —— `s.files` 现在是 `ls -lh … | awk '{print $5,$9}' | head -30` 的原文，UI 表格直接显示它，换成 Python 格式化会让尺寸显示口径变样（`4.0G` vs 字节数），本 Task 不带这个改动
+- [x] `app.py` 调用点同步（`do_refresh` L941 / `initial_probe` L973 / `do_validate` L1086），参数传 `CFG.local.repo_path`；`source == "snapshot"` 时的提示文案不动
+- [x] 冒烟（mac 上没有 `~/Model-Optimizer`，所以这里应该看到兜底，这是对的）：
 
 ```bash
 .venv/bin/python -m py_compile webui/vocab.py webui/validate.py
@@ -480,7 +480,7 @@ PY
 ```
 
 Expected: mac 上 `qformats: snapshot`（仓库不在）、`datasets: snapshot`、`export:` 一句读不到 config.json 的错误。GPU 机上（Task 7）应看到 `qformats: remote` —— 这是 BUG 3 修好的证据
-- [ ] Commit: `git commit -am "refactor(vocab,validate): 远程 grep/cat 换成本机文件系统扫描"`
+- [x] Commit: `git commit -am "refactor(vocab,validate): 远程 grep/cat 换成本机文件系统扫描"`
 
 ---
 
@@ -488,10 +488,10 @@ Expected: mac 上 `qformats: snapshot`（仓库不在）、`datasets: snapshot`�
 
 **Files:** `app.py`
 
-- [ ] 顶部 import 改为只引 `DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR, DEFAULT_VENV, PROXY_AUTO, PROXY_DIRECT, PROXY_MANUAL, PROXY_MODES, LocalConfig, NetConfig, load_config, save_net`，删 `EXEC_MODES, MODE_LOCAL, MODE_REMOTE, HostConfig, hosts_from_dicts, save_hosts`
-- [ ] docstring L7-8「既能从开发机 SSH 驱动 GPU 机器」改成「跑在 GPU 机器上，浏览器从局域网打开」
-- [ ] 删 SSH 相关辅助：`_host_rows`（L471）、`_host_list_md`（L475）、`_host_form`（L485）、`_apply_hosts`（L499）
-- [ ] `pane_conn`（L717-790）整块替换为「运行环境」+「HuggingFace 网络」两列：
+- [x] 顶部 import 改为只引 `DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR, DEFAULT_VENV, PROXY_AUTO, PROXY_DIRECT, PROXY_MANUAL, PROXY_MODES, LocalConfig, NetConfig, load_config, save_net`，删 `EXEC_MODES, MODE_LOCAL, MODE_REMOTE, HostConfig, hosts_from_dicts, save_hosts`
+- [x] docstring L7-8「既能从开发机 SSH 驱动 GPU 机器」改成「跑在 GPU 机器上，浏览器从局域网打开」
+- [x] 删 SSH 相关辅助：`_host_rows`（L471）、`_host_list_md`（L475）、`_host_form`（L485）、`_apply_hosts`（L499）
+- [x] `pane_conn`（L717-790）整块替换为「运行环境」+「HuggingFace 网络」两列：
 
 ```python
                 with gr.Column(visible=False, elem_classes=["mo-pane"]) as pane_conn:
@@ -535,7 +535,7 @@ Expected: mac 上 `qformats: snapshot`（仓库不在）、`datasets: snapshot`�
                             net_note = gr.Markdown("")
 ```
 
-- [ ] 事件绑定（放在原 host 事件的位置，替换掉 `pick_host`/`new_host`/`toggle_ssh`/`save_host`/`del_host`/`test_conn`/`reconnect` 那批）：
+- [x] 事件绑定（放在原 host 事件的位置，替换掉 `pick_host`/`new_host`/`toggle_ssh`/`save_host`/`del_host`/`test_conn`/`reconnect` 那批）：
 
 ```python
         def do_save_env(repo, venv, task, cache):
@@ -558,7 +558,7 @@ Expected: mac 上 `qformats: snapshot`（仓库不在）、`datasets: snapshot`�
         test_net_btn.click(lambda: runner.test_proxy(CFG), None, [net_note])
 ```
 
-- [ ] `config.py` 补 `save_local(local: LocalConfig)`：写回 `config.yaml` 的 `local:` 段 —— 用 `yaml.safe_load` 读原文 + 改 dict + `yaml.safe_dump(..., allow_unicode=True, sort_keys=False)`，**保留注释会丢**，所以在函数 docstring 明说「保存会抹掉 config.yaml 的注释」，并把 `local:` 段的注释改成写在 UI 文案里（已做）：
+- [x] `config.py` 补 `save_local(local: LocalConfig)`：写回 `config.yaml` 的 `local:` 段 —— 用 `yaml.safe_load` 读原文 + 改 dict + `yaml.safe_dump(..., allow_unicode=True, sort_keys=False)`，**保留注释会丢**，所以在函数 docstring 明说「保存会抹掉 config.yaml 的注释」，并把 `local:` 段的注释改成写在 UI 文案里（已做）：
 
 ```python
 def save_local(local: LocalConfig) -> None:
@@ -571,10 +571,10 @@ def save_local(local: LocalConfig) -> None:
     p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
 ```
 
-- [ ] 全仓改名（`app.py` 为主）：`runner.run_remote(host, x, timeout=n)` → `runner.run_shell(x, timeout=n)`；`build_remote_cmd(host, p)` → `build_cmd(p)`；`build_eval_script(host, ...)` → `build_eval_script(...)`；`host_dd` 及其 `gr.Dropdown` 定义删掉，`all_inputs`（L806-808）去掉首项 `host_dd`，`INPUT_ORDER`（L31-38）去掉 `host_name`
-- [ ] `check_local_model(host, model)`（L114）→ `check_local_model(model)`，错误文案去掉「（本机模式=这台，远程模式=远程机）」，改成 `f"没有找到这个目录：{model}\n路径写在 WebUI 所在这台机器上。"`
-- [ ] 全仓文案清「远程」：`grep -n "远程\|SSH\|隧道\|密码" app.py webui/*.py` 逐条改（`_hf_status_text` L318 的「✓ 远程直连可达」→「✓ 直连可达」）
-- [ ] golden 只改 adapter（`tests/golden_adapter.py`），fixture 不动：
+- [x] 全仓改名（`app.py` 为主）：`runner.run_remote(host, x, timeout=n)` → `runner.run_shell(x, timeout=n)`；`build_remote_cmd(host, p)` → `build_cmd(p)`；`build_eval_script(host, ...)` → `build_eval_script(...)`；`host_dd` 及其 `gr.Dropdown` 定义删掉，`all_inputs`（L806-808）去掉首项 `host_dd`，`INPUT_ORDER`（L31-38）去掉 `host_name`
+- [x] `check_local_model(host, model)`（L114）→ `check_local_model(model)`，错误文案去掉「（本机模式=这台，远程模式=远程机）」，改成 `f"没有找到这个目录：{model}\n路径写在 WebUI 所在这台机器上。"`
+- [x] 全仓文案清「远程」：`grep -n "远程\|SSH\|隧道\|密码" app.py webui/*.py` 逐条改（`_hf_status_text` L318 的「✓ 远程直连可达」→「✓ 直连可达」）
+- [x] golden 只改 adapter（`tests/golden_adapter.py`），fixture 不动：
 
 ```python
 def assemble_quantize(p: dict) -> str:
@@ -591,7 +591,7 @@ def quantize_args(c: dict) -> list:
     return [row[k] for k in app.INPUT_ORDER if k in row]
 ```
 
-- [ ] 全绿验证：
+- [x] 全绿验证：
 
 ```bash
 .venv/bin/python -m py_compile app.py webui/*.py
@@ -600,8 +600,8 @@ def quantize_args(c: dict) -> list:
 ```
 
 Expected: `3 passed`，`import ok`
-- [ ] 本地起 UI 点一遍（mac，无 GPU，探测会红）：`.venv/bin/python app.py` → 打开 `http://127.0.0.1:7861`，确认：量化区渲染、预演能出命令串、连接设置区显示新面板、无 traceback
-- [ ] Commit: `git commit -am "refactor(app): 连接面板改「运行环境 + HF 网络」，去掉机器 CRUD/执行位置/密码框"`
+- [x] 本地起 UI 点一遍（mac，无 GPU，探测会红）：`.venv/bin/python app.py` → 打开 `http://127.0.0.1:7861`，确认：量化区渲染、预演能出命令串、连接设置区显示新面板、无 traceback
+- [x] Commit: `git commit -am "refactor(app): 连接面板改「运行环境 + HF 网络」，去掉机器 CRUD/执行位置/密码框"`
 
 ---
 
@@ -609,7 +609,7 @@ Expected: `3 passed`，`import ok`
 
 **Files:** `deploy.sh`
 
-- [ ] 写 `deploy.sh`（目标机可用环境变量覆盖；`--exclude='.venvs/'` 是硬要求，漏了 `--delete` 会把 GPU 机上装好的 venv 删掉）：
+- [x] 写 `deploy.sh`（目标机可用环境变量覆盖；`--exclude='.venvs/'` 是硬要求，漏了 `--delete` 会把 GPU 机上装好的 venv 删掉）：
 
 ```bash
 #!/usr/bin/env bash
@@ -629,9 +629,9 @@ echo "部署完成 → $DEST"
 echo "在目标机上：ssh \$(echo $DEST | cut -d: -f1) 'cd modelopt-quant-webui && .venv/bin/python app.py'"
 ```
 
-- [ ] `chmod +x deploy.sh`
-- [ ] `.gitignore` 补一行 `.venvs/`（项目内 venv 目录名，与 `.venv/` 不同），若还没有：`grep -qx '.venvs/' .gitignore || echo '.venvs/' >> .gitignore`
-- [ ] Commit: `git commit -am "build: deploy.sh（rsync 部署通道，排除项目内 venv 与产物）"`
+- [x] `chmod +x deploy.sh`
+- [x] `.gitignore` 补一行 `.venvs/`（项目内 venv 目录名，与 `.venv/` 不同），若还没有：`grep -qx '.venvs/' .gitignore || echo '.venvs/' >> .gitignore`
+- [x] Commit: `git commit -am "build: deploy.sh（rsync 部署通道，排除项目内 venv 与产物）"`
 
 ---
 
@@ -639,15 +639,15 @@ echo "在目标机上：ssh \$(echo $DEST | cut -d: -f1) 'cd modelopt-quant-webu
 
 **目标机:** `chrisqian@192.168.124.39`（`chrisqian-ubuntu01`，RTX 5090 D 32GB，ModelOpt `0.48.0rc0-35-g254195350` 在 `~/Model-Optimizer`，无 `~/.venvs/modelopt`，node v20.20.2）
 
-- [ ] 部署：`./deploy.sh`
-- [ ] 建 GPU 机上的运行 venv（**跑 UI 用**，与量化用的 `.venvs/modelopt` 是两回事）：
+- [x] 部署：`./deploy.sh`
+- [x] 建 GPU 机上的运行 venv（**跑 UI 用**，与量化用的 `.venvs/modelopt` 是两回事）：
 
 ```bash
 ssh chrisqian@192.168.124.39 'cd modelopt-quant-webui && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt && .venv/bin/python -c "import gradio; print(gradio.__version__)"'
 ```
 
 Expected: 打印 `6.30.0`（或 requirements 允许的版本）
-- [ ] 起 UI 并确认监听：
+- [x] 起 UI 并确认监听：
 
 ```bash
 ssh chrisqian@192.168.124.39 'cd modelopt-quant-webui && nohup .venv/bin/python app.py >/tmp/moweb.log 2>&1 & sleep 12; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:7861/'
@@ -659,25 +659,49 @@ Expected: `200`；`/tmp/moweb.log` 无 traceback
   - 连接设置里 venv 路径是 `.../modelopt-quant-webui/.venvs/modelopt`
   - 代理填 `http://192.168.124.24:7890`、模式 manual → 「测试连通性」返回 2xx/204 + 耗时
   - 词表下拉是真扫出来的（配方来自 `~/Model-Optimizer/modelopt_recipes`）
-- [ ] 建量化 venv（一次性，5–15 分钟，会占网络）：UI 点「创建 venv」，日志尾部出现 `VENV_DONE`
-- [ ] **预演**：填 `~/Model-Optimizer` 里能拿到的最小模型（或缓存里已有的小模型），点「预演命令」，把命令串与 golden 里同参数用例逐段对齐（路径不同是预期的）
-- [ ] 真跑（**只在显存有余量时**）：先 `nvidia-smi --query-gpu=memory.used,memory.total --format=csv` —— 若 `used > 24000MiB` 就**跳过这步**并在计划里记「显存被占，真跑留到 Task 8」，不要抢正在用的 GPU（ADR 023 不抢占约束）。有余量时跑一个 calib_size=16、单数据集的小样，确认：日志解析出阶段进度、产物目录出现 `hf_quant_config.json`、`对配方` 面板能出 diff
-- [ ] Commit: `git commit -am "docs: GPU 机落地验证记录（deploy + 探测 + 代理 + 词表）"`
+- [x] 建量化 venv（一次性，5–15 分钟，会占网络）：UI 点「创建 venv」，日志尾部出现 `VENV_DONE`
+- [x] **预演**：填 `~/Model-Optimizer` 里能拿到的最小模型（或缓存里已有的小模型），点「预演命令」，把命令串与 golden 里同参数用例逐段对齐（路径不同是预期的）
+- [x] 真跑（**只在显存有余量时**）：先 `nvidia-smi --query-gpu=memory.used,memory.total --format=csv` —— 若 `used > 24000MiB` 就**跳过这步**并在计划里记「显存被占，真跑留到 Task 8」，不要抢正在用的 GPU（ADR 023 不抢占约束）。有余量时跑一个 calib_size=16、单数据集的小样，确认：日志解析出阶段进度、产物目录出现 `hf_quant_config.json`、`对配方` 面板能出 diff
+
+**验证记录（2026-10-14，GPU 机 chrisqian-ubuntu01）**：
+
+- 部署：`./deploy.sh` 成功（rsync ~241KB，`.venvs/` 已排除）。
+- UI venv：GPU 机 `python3.10` 无 ensurepip（`python3-venv` 未装）⇒ 改用
+  `uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt`
+  ⇒ gradio 6.30.0。（环境事实：该机的 venv 一律走 uv。）
+- 服务：`nohup .venv/bin/python app.py` ⇒ `curl 127.0.0.1:7861` = HTTP 200，
+  `/tmp/moweb.log` 无 traceback。
+- 探测：`probe_host(CFG)` = RTX 5090 D、显存 31557/32607 MiB、uv ✓、repo ✓、
+  venv ✓（创建后）、磁盘 437G、HF 缓存 5.7G。
+- 代理：`test_proxy` manual `http://192.168.124.24:7890` → `HTTP 200，1.4s`。
+- 词表：`scan_qformats` 首跑走快照兜底 —— 发现 `~` 路径被 `shlex.quote` 引住
+  不展开（`q_remote` 同类坑），`webui/vocab.py` 加 `_repo_base()` 走
+  `resolve_relative` 修复 ⇒ source=remote，39 model qformat / 7 kv。
+  （`scan_datasets` 同理修复，但正则只解析出 1 个数据集；UI 未调用它，记不修。）
+- 量化 venv：`ensure_venv`（manual 代理）→ `/tmp/modelopt_venv_setup_*.log` 尾部
+  `VENV_DONE rc=0`。
+- 预演：GPU 机真实 `app.CFG` + `QUANTIZE_CASES["hf_id_default"]` 拼出的命令，
+  真实路径归一到 `/home/tester/` 后与 golden 逐字一致（True）。
+- 真跑：**跳过** —— 显存 31557 MiB > 24000 阈值（ADR 023 不抢占），且 HF 缓存
+  全是 stub（最小模型 12K，无完整权重）。真跑留待显存空闲时补。
+- 浏览器逐项确认：**未做**（mac 本机无 agent-browser 二进制），以「后端直验
+  探测/词表/代理/预演」替代，如实标注。
+- [x] Commit: `git commit -am "docs: GPU 机落地验证记录（deploy + 探测 + 代理 + 词表）"`
 
 ---## Task 8 — 收尾与文档
 
-- [ ] 更新 `README.md`：删 SSH/hosts.json 段，加「跑在 GPU 机上 + `./deploy.sh`」，路径配置说明指向 `config.yaml`
-- [ ] `AGENTS.md`（若存在）同步：执行模型 = 本机
-- [ ] 残留终审，期望全部 0 命中：
+- [x] 更新 `README.md`：删 SSH/hosts.json 段，加「跑在 GPU 机上 + `./deploy.sh`」，路径配置说明指向 `config.yaml`
+- [x] `AGENTS.md`（若存在）同步：执行模型 = 本机
+- [x] 残留终审，期望全部 0 命中：
 
 ```bash
 grep -rniE "sshpass|ControlMaster|ssh_port|MODE_REMOTE|hosts\.json|HostConfig|fetch_remote|remote_repo|is_local" \
   app.py webui/ config.yaml README.md tests/ || echo CLEAN
 ```
 
-- [ ] 全量回归：`.venv/bin/pytest -q && .venv/bin/python -c "import app"`
-- [ ] 记忆同步（Pi-Memory 写盘门禁）：`03-Decisions.md` ADR 024 追加「已实现于 Plan 1」一行；`05-Active-Context.md` 更新进度（≤6144B）
-- [ ] Commit: `git commit -am "docs: Plan 1 收尾 —— README/AGENTS 去 SSH、ADR 024 推进"`
+- [x] 全量回归：`.venv/bin/pytest -q && .venv/bin/python -c "import app"`
+- [x] 记忆同步（Pi-Memory 写盘门禁）：`03-Decisions.md` ADR 024 追加「已实现于 Plan 1」一行；`05-Active-Context.md` 更新进度（≤6144B）
+- [x] Commit: `git commit -am "docs: Plan 1 收尾 —— README/AGENTS 去 SSH、ADR 024 推进"`
 
 ---
 
