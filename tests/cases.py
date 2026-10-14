@@ -34,6 +34,16 @@ QUANTIZE_CASES: dict[str, dict] = {
         "use_fsdp2": False, "cpu_offload": False, "low_memory_mode": False,
         "gpu_max_mem_percentage": 0.0, "skip_generate": False,
     },
+    "custom_dataset_single_col": {
+        "model": "hf-org/Tiny-124M", "trust_remote_code": False,
+        "qformat": "nvfp4", "recipe": "", "kv_cache_qformat": "none",
+        "datasets": [], "sizes_names": [], "sizes": {},
+        "custom_datasets": ["tiny"],
+        "calib_seq": 0, "calib_with_images": False, "export_path": "",
+        "batch_size": 0, "device": "cuda", "attn_implementation": "",
+        "use_fsdp2": False, "cpu_offload": False, "low_memory_mode": False,
+        "gpu_max_mem_percentage": 0.0, "skip_generate": False,
+    },
 }
 
 EVAL_CASES: dict[str, dict] = {

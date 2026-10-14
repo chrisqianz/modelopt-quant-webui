@@ -173,6 +173,10 @@ def build_cmd(p: dict) -> str:
         ds_names.append(name)
         ds_sizes.append(str(int(sizes.get(name) or default_size)))
     for row in p.get("custom_datasets") or []:
+        # gradio 单列 DataFrame 会把整表折成「每行一个标量」（['tiny']），
+        # 这里补回一行两列的形状，否则用户填了但命令里没有且无提示。
+        if isinstance(row, (str, int, float)):
+            row = [row]
         if not isinstance(row, (list, tuple)) or len(row) < 1:
             continue
         name = str(row[0]).strip()
