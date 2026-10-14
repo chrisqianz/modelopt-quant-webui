@@ -10,8 +10,9 @@ web/node_modules/
 web/dist/
 web/.vite/
 
-# 机器本地状态（含主机信息，不入库）
+# 机器本地状态（含主机/代理信息，不入库）
 hosts.json
+net.json
 server.json
 
 # 工具/临时

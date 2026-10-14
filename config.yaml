@@ -1,26 +1,25 @@
 # ModelOpt 量化 WebUI 配置
-# 目标机器（hosts）在 UI「目标机器」面板维护，持久化在同目录的 hosts.json（首次运行自动播种）。
+# WebUI 跑在有 GPU 的这台机器上，路径都按「本机」解释。
+# 换服务器：改下面四行路径 + 重启即可，不需要任何配置迁移。
 
-# UI 监听
 server:
   host: 0.0.0.0          # 局域网内其他设备也能打开；只要本机访问改回 127.0.0.1
   port: 7861
+  token: ""              # 非空则所有 /api/* 要求 X-Api-Token；局域网内留空即可
 
-# 目标机器列表在 UI「⚙ 连接设置」面板编辑，保存后写入同目录 hosts.json。
+# 路径。相对路径按「config.yaml 所在目录」解析 —— venv 在项目内，跟着仓库走。
+local:
+  repo: ~/Model-Optimizer        # Model-Optimizer 仓库（hf_ptq.py 在 examples/hf_ptq/ 下）
+  venv: .venvs/modelopt          # 量化用的虚拟环境（项目内，不进 ~）
+  task_dir: ~/quant-webui-tasks  # 产物与日志；故意在仓库外，免得被 rsync 拖走
+  hf_cache: ~/.cache/huggingface
 
-# HuggingFace 下载的网络（只是首次启动的初值，UI 里改了以 UI 为准）
-# 代理地址不在这里写死：留空 = 读本机环境变量（ALL_PROXY / all_proxy），要固定就在 UI 里填。
-# mode: auto   先试直连 huggingface.co，不通再用代理（仅 SSH 机器能自动建反向隧道）
-#       manual 强制用下面的地址
-#       direct 不用代理
-# remote_proxy 给远程机器用（得是远程能连到的地址，不能填 127.0.0.1）
-# local_proxy  给 UI 所在这台机器用（本机跑量化时用）
+# HuggingFace 下载走哪条网。代理地址一律手填，程序不猜拓扑。
+# mode: auto 先试直连 huggingface.co，不通再用 proxy；manual 强制；direct 不用
 network:
   mode: auto
-  remote_proxy: ""
-  local_proxy: ""
+  proxy: ""              # 例：http://127.0.0.1:7890
 
-# 默认参数（UI 打开时的初始值，均可在界面上改）
 defaults:
   calib_size: 1024
   calib_seq: 512
