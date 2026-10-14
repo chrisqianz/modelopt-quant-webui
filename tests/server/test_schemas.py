@@ -1,6 +1,7 @@
 """pydantic 模型层的最小契约测试（Task 2）。"""
-import pytest
 from pydantic import ValidationError
+
+import pytest
 
 from server.schemas import (
     EvalStart,

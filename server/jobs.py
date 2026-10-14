@@ -83,7 +83,9 @@ class JobRegistry:
 
     def list(self) -> list[Job]:
         """活跃(starting/running)在前、历史在后，各自 started_at 倒序。"""
-        active = [j for j in self._jobs.values() if j.state in ("starting", "running")]
+        # list() 快照：其他线程（API 请求）并发 create() 时不触发
+        # dictionary changed size during iteration
+        active = [j for j in list(self._jobs.values()) if j.state in ("starting", "running")]
         done = [j for j in self._jobs.values() if j.state not in ("starting", "running")]
         active.sort(key=lambda j: j.started_at, reverse=True)
         done.sort(key=lambda j: j.started_at, reverse=True)
@@ -95,6 +97,9 @@ class JobRegistry:
         job = self.get(job_id)
         if job is None:
             return ""
+        if job.state in _TERMINAL:
+            # 终态不可再 abort：不覆盖、不重复落盘/广播
+            return job.state
         if job.task is not None:
             runner.abort_task(job.task)
         job.state = "aborted"
@@ -103,6 +108,9 @@ class JobRegistry:
             # 见 _done 即退出，不再写 done/failed。
             job._done = True
         self.persist(job)
+        # abort 后 poller 循环条件（state in _TERMINAL）直接退出不补发，
+        # 这里必须广播 state，否则 SSE 客户端挂在 await q.get() 永不终止。
+        self._broadcast(job, "state", {"state": job.state})
         return job.state
 
     # ---------------------------------------------------------------- 落盘
@@ -137,58 +145,64 @@ class JobRegistry:
             try:
                 with open(path) as f:
                     raw = json.load(f)
-            except (OSError, ValueError):
-                continue
-            job = Job(
-                id=raw.get("id") or os.path.basename(os.path.dirname(path)),
-                kind=raw.get("kind", ""),
-                task=None,
-                state=raw.get("state", "failed"),
-                log_path=raw.get("log_path", ""),
-                cmd=raw.get("cmd", ""),
-                export_dir=raw.get("export_dir", ""),
-                version=raw.get("version", ""),
-                commit=raw.get("commit", ""),
-                started_at=float(raw.get("started_at") or time.time()),
-            )
-            state = job.state
-            if state in ("done", "failed", "aborted"):
-                # 1) 已终态：原样收编，不挂 poller。
-                self._jobs[job.id] = job
-                loaded.append(job)
-                continue
-            pid = str(raw.get("pid") or "").strip()
-            if pid and _pid_alive(int(pid)):
-                # 2) 进程还活着：重建 Task，重新接管轮询。
-                job.task = runner.Task(
-                    task_id=job.id,
-                    remote_cmd=job.cmd,
-                    log_path=job.log_path,
-                    pid=pid,
-                    state="running",
-                    started_at=job.started_at,
-                    done_marker=raw.get("done_marker", ""),
-                    pkill_pattern="",
+                job = Job(
+                    id=raw.get("id") or os.path.basename(os.path.dirname(path)),
+                    kind=raw.get("kind", ""),
+                    task=None,
+                    state=raw.get("state", "failed"),
+                    log_path=raw.get("log_path", ""),
+                    cmd=raw.get("cmd", ""),
+                    export_dir=raw.get("export_dir", ""),
+                    version=raw.get("version", ""),
+                    commit=raw.get("commit", ""),
+                    started_at=float(raw.get("started_at") or time.time()),
                 )
-                job.state = "running"
+                state = job.state
+                if state in ("done", "failed", "aborted"):
+                    # 1) 已终态：原样收编，不挂 poller。
+                    self._jobs[job.id] = job
+                    loaded.append(job)
+                    continue
+                pid = str(raw.get("pid") or "").strip()
+                if pid and _pid_alive(int(pid)):
+                    # 2) 进程还活着：重建 Task，重新接管轮询。
+                    # done_marker 回落 Task 默认值（persist 总会写该键，
+                    # 只有手工/旧版文件会缺）——空串会让 poll_task 的
+                    # `marker in tail` 恒真，死进程被误判 done。
+                    job.task = runner.Task(
+                        task_id=job.id,
+                        remote_cmd=job.cmd,
+                        log_path=job.log_path,
+                        pid=pid,
+                        state="running",
+                        started_at=job.started_at,
+                        done_marker=raw.get("done_marker")
+                        or runner.Task.__dataclass_fields__["done_marker"].default,
+                        pkill_pattern="",
+                    )
+                    job.state = "running"
+                    self._jobs[job.id] = job
+                    self.start_poller(job)
+                    loaded.append(job)
+                    continue
+                # 3) pid 空或已死（state 仍是 starting/running）：读日志尾判终态。
+                if not job.log_path:
+                    job.state = "failed"
+                elif job.kind == "venv":
+                    tail = runner.tail_log(job.log_path, 4000)
+                    job.state = "done" if "VENV_DONE rc=0" in tail else "failed"
+                elif job.kind == "eval_env":
+                    tail = runner.tail_log(job.log_path, 4000)
+                    job.state = "done" if "EVAL_ENV_DONE rc=0" in tail else "failed"
+                else:
+                    # quant/eval：进程死了但没写 done marker，保守判 failed。
+                    job.state = "failed"
                 self._jobs[job.id] = job
-                self.start_poller(job)
                 loaded.append(job)
+            except (OSError, ValueError, TypeError):
+                # 单文件脏数据（缺字段/类型错/半截 json）只跳过该文件，
+                # 不炸掉启动时全部 job 的重挂。
                 continue
-            # 3) pid 空或已死（state 仍是 starting/running）：读日志尾判终态。
-            if not job.log_path:
-                job.state = "failed"
-            elif job.kind == "venv":
-                tail = runner.tail_log(job.log_path, 4000)
-                job.state = "done" if "VENV_DONE rc=0" in tail else "failed"
-            elif job.kind == "eval_env":
-                tail = runner.tail_log(job.log_path, 4000)
-                job.state = "done" if "EVAL_ENV_DONE rc=0" in tail else "failed"
-            else:
-                # quant/eval：进程死了但没写 done marker，保守判 failed。
-                job.state = "failed"
-            self._jobs[job.id] = job
-            loaded.append(job)
         return loaded
 
     # ---------------------------------------------------------------- poller
@@ -271,13 +285,31 @@ class JobRegistry:
         else:
             replay_to = start_offset
         # 2) 实时：消费队列，按去重游标跳过已重放过的 log 事件。
-        while True:
-            item = await q.get()
-            if item["type"] == "log" and item["id"] <= replay_to:
-                continue
-            yield _sse_line(item["type"], item["id"], item["data"])
-            if item["type"] == "state" and item["data"]["state"] in ("done", "failed", "aborted"):
-                break
+        # 退出（正常 break / 客户端断开 GeneratorExit）必须注销订阅者：
+        # 不注销则队列无消费者无限增长，且 loop 关闭后 poller 的
+        # call_soon_threadsafe 抛 RuntimeError 被 _poll 的 except 捕获
+        # → job 被误判 failed。
+        try:
+            while True:
+                item = await q.get()
+                if item["type"] == "log" and item["id"] <= replay_to:
+                    continue
+                yield _sse_line(item["type"], item["id"], item["data"])
+                if item["type"] == "state" and item["data"]["state"] in ("done", "failed", "aborted"):
+                    break
+        finally:
+            try:
+                job._subscribers.remove((q, asyncio.get_running_loop()))
+            except (ValueError, RuntimeError):
+                # RuntimeError：生成器被提前关闭时当前线程可能不在原 loop；
+                # 此时按对象身份移除仍安全（_subscribers 存的就是 (q, loop) 对）。
+                try:
+                    for s in list(job._subscribers):
+                        if s[0] is q:
+                            job._subscribers.remove(s)
+                            break
+                except (ValueError, RuntimeError):
+                    pass
 
     def _broadcast(self, job, evt, data) -> None:
         item = {"type": evt, "data": data, "id": job.log_offset}
@@ -295,7 +327,7 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _sse_line(evt: str, evt_id, data) -> str:
+def _sse_line(evt: str, evt_id: int, data: dict) -> str:
     """progress 事件丢弃 bar 字段（纯展示，重放/续传用不上）。"""
     if evt == "progress" and isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "bar"}

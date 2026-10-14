@@ -1,11 +1,11 @@
 """server.jobs 测试：Part A（create/persist/reload）+ Part B（poller + SSE 扇出）。
 
-poller 是 5s 一跳的线程，测试里把 server.jobs.time.sleep patch 到 0.05s。
-"""
+poller 是 5s 一跳的线程，测试里把 server.jobs._sleep 打补丁到 0.05s
+（不要 patch time.sleep——它 patch 的是全局 time 模块，假实现内部
+再调 time.sleep 会无限递归，曾挂死整个测试套）。"""
 import asyncio
 import json
 import time
-
 from unittest.mock import patch
 
 from server import jobs as jobs_mod
@@ -121,6 +121,59 @@ class TestCreatePersistReload:
         assert job.state == "aborted"
         m.assert_called_once_with(task)
         assert registry.abort("nope") == ""
+
+    def test_abort_broadcasts_state_event(self, registry, cfg):
+        """B1 回归：abort 必须广播 state 事件，否则 SSE 客户端挂在
+        await q.get() 永不终止（sse_stream 靠 state 事件 break）。"""
+        task = runner.Task(task_id="t2", remote_cmd="true",
+                           log_path=str(cfg.local.task_path / "t2" / "run.log"),
+                           pid="1", state="running")
+        job = registry.create("quant", task, "cmd")
+
+        async def main():
+            q, _ = registry.subscribe(job)
+            assert registry.abort(job.id) == "aborted"
+            item = await asyncio.wait_for(q.get(), timeout=1.0)
+            return item
+
+        item = asyncio.run(main())
+        assert item["type"] == "state"
+        assert item["data"] == {"state": "aborted"}
+
+    def test_abort_terminal_job_is_noop(self, registry, cfg):
+        """终态 job 不可再 abort：不覆盖 state、不重复落盘/广播。"""
+        task = runner.Task(task_id="t3", remote_cmd="true",
+                           log_path=str(cfg.local.task_path / "t3" / "run.log"),
+                           pid="1", state="running")
+        job = registry.create("quant", task, "cmd")
+        job.state = "done"
+        with patch.object(jobs_mod.runner, "abort_task") as m:
+            assert registry.abort(job.id) == "done"
+        m.assert_not_called()
+        assert job.state == "done"
+
+    def test_reload_skips_dirty_job_json(self, registry, cfg):
+        """建议 2 回归：单个 job.json 脏数据（类型错）只跳过该文件，
+        不炸掉启动时其他 job 的收编。"""
+        d_bad = cfg.local.task_path / "bad_1"
+        d_bad.mkdir(parents=True)
+        (d_bad / "job.json").write_text(json.dumps({
+            "pid": "abc",  # int("abc") 会抛 ValueError
+            "log_path": "", "cmd": "x", "state": "running", "kind": "quant",
+            "started_at": "abc",
+        }))
+        d_ok = cfg.local.task_path / "good_1"
+        d_ok.mkdir(parents=True)
+        (d_ok / "job.json").write_text(json.dumps({
+            "pid": "", "log_path": "", "cmd": "true", "state": "failed",
+            "kind": "quant", "started_at": time.time(),
+        }))
+        loaded = registry.reload()  # 不应抛异常
+        ids = {j.id for j in loaded}
+        assert "bad_1" not in ids
+        assert "good_1" in ids
+        assert registry.get("bad_1") is None
+        assert registry.get("good_1").state == "failed"
 
     def test_abort_venv_sets_done_flag(self, registry):
         job = registry.create("venv", None, "uv venv")
