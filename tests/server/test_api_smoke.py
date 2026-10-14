@@ -280,6 +280,8 @@ def test_net(client):
 def test_models_local(client, tmp_path):
     hub = tmp_path / "hf" / "hub"
     (hub / "models--org--name" / "snapshots" / "s1").mkdir(parents=True)
+    (hub / "models--org--name" / "refs").mkdir()
+    (hub / "models--org--name" / "refs" / "main").write_text("abc123def\n")
     (hub / "models--org--stub").mkdir(parents=True)
     r = client.get("/api/models/local")
     assert r.status_code == 200
@@ -288,7 +290,9 @@ def test_models_local(client, tmp_path):
     by_id = {m["id"]: m for m in body["models"]}
     assert by_id["org/name"]["stub"] is False
     assert by_id["org/name"]["size"] == "1.2G"
+    assert by_id["org/name"]["revision"] == "abc123def"
     assert by_id["org/stub"]["stub"] is True
+    assert by_id["org/stub"]["revision"] == ""
 
 
 def test_models_local_missing_cache(client, tmp_path):

@@ -71,6 +71,7 @@ function buildInitialForm(data: Bootstrap | null): FormState {
 export default function QuantizeView({ data }: { data: Bootstrap | null }) {
   const [form, setForm] = useState<FormState>(() => buildInitialForm(data))
   const [models, setModels] = useState<LocalModel[]>([])
+  const [showAllModels, setShowAllModels] = useState(false)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [previewErr, setPreviewErr] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -218,6 +219,43 @@ export default function QuantizeView({ data }: { data: Bootstrap | null }) {
                   ))}
                 </datalist>
               </Field>
+              {models.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="text-[11px] text-slate-500 self-center">本机缓存：</span>
+                  {(showAllModels ? models : models.slice(0, 8)).map((m) => {
+                    const selected = form.model.trim() === m.id
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        title={`${m.id}（${m.size || '未知大小'}${m.revision ? '，rev ' + m.revision.slice(0, 12) : ''}${m.stub ? '，空壳' : ''}）`}
+                        onClick={() => set('model', m.id)}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono border transition-colors ${
+                          selected
+                            ? 'border-violet-500 bg-violet-500/15 text-violet-300'
+                            : m.stub
+                              ? 'border-slate-800 bg-slate-900 text-slate-500 hover:text-slate-400'
+                              : 'border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:border-slate-600'
+                        }`}
+                      >
+                        {m.id}
+                        {m.stub && (
+                          <span className="px-1 rounded bg-slate-700/60 text-[10px] text-slate-400">空壳</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                  {models.length > 8 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllModels((v) => !v)}
+                      className="px-2 py-0.5 rounded-md text-[11px] text-cyan-400 hover:text-cyan-300 border border-cyan-800/40"
+                    >
+                      {showAllModels ? '收起' : `全部 ${models.length} 个`}
+                    </button>
+                  )}
+                </div>
+              )}
               <Toggle label="trust_remote_code" checked={form.trust_remote_code}
                 onChange={(v) => set('trust_remote_code', v)} />
             </div>

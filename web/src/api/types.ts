@@ -198,11 +198,13 @@ export interface EvalResults {
   files: string[]
 }
 
-/** GET /api/models/local（C2 最小版） */
+/** GET /api/models/local（C2 完整版） */
 export interface LocalModel {
   id: string
   size: string
   stub: boolean
+  /** snapshot hash（refs/main 第一行；空壳/不完整为 ""） */
+  revision: string
 }
 
 /** GET /api/artifacts（C1 完整版：模型名/qformat 从 job.json.cmd 或 run.log 首行提取） */

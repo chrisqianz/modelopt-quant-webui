@@ -236,7 +236,7 @@ def get_net() -> dict:
 
 @router.get("/models/local")
 def models_local() -> dict:
-    """本机 HF 缓存里的模型列表（C1/C2 最小版：目录名 + 大小 + 是否空壳）。"""
+    """本机 HF 缓存里的模型列表（C2 完整版：目录名 + 大小 + 空壳标记 + snapshot revision）。"""
     hub = CFG.local.hf_cache_path / "hub"
     if not hub.exists():
         return {"models": [], "error": f"缓存目录不存在: {hub}"}
@@ -244,10 +244,21 @@ def models_local() -> dict:
     for d in sorted(hub.glob("models--*--*")):
         if not d.is_dir():
             continue
+        # refs/main 里是一行 snapshot hash（取不到 = 空壳/不完整，留空串）
+        revision = ""
+        ref = d / "refs" / "main"
+        if ref.exists():
+            try:
+                lines = ref.read_text().strip().splitlines()
+                if lines:
+                    revision = lines[0]
+            except OSError:
+                pass
         out.append({
             "id": d.name.replace("models--", "", 1).replace("--", "/", 1),
             "size": _du_size(d),
             "stub": not (d / "snapshots").exists(),
+            "revision": revision,
         })
     return {"models": out, "error": ""}
 
