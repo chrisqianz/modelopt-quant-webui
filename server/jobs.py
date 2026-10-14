@@ -236,10 +236,12 @@ class JobRegistry:
                         if cands:
                             job.log_path = max(cands, key=os.path.getmtime)
                             self.persist(job)
-                    if not job.log_path:
+                    if not job.log_path and not job._done:
                         _sleep(5)
                         continue
-                    raw = runner.tail_log(job.log_path, 30000)
+                    # _done 且无日志（venv 已存在早退不写 /tmp 日志）⇒ raw 当空串，
+                    # 直接落到下方 elif job._done 判终态，不再等 glob。
+                    raw = runner.tail_log(job.log_path, 30000) if job.log_path else ""
                     rep = progress.parse_install(raw.splitlines())
                     # 终态判定三选一：(a) 日志 marker (b) 包装线程退出无异常 (c) 有异常
                     m = re.search(r"(VENV_DONE|EVAL_ENV_DONE) rc=(\d+)", raw)

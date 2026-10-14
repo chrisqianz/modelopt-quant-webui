@@ -20,8 +20,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from webui import progress, runner, validate, vocab
 from webui.cmds import (build_cmd, build_eval_script, check_local_model,
                         is_local_model, prettify_cmd, result_tables, task_slug)
-from webui.config import (LocalConfig, NetConfig, load_config, save_local,
-                          save_net)
+from webui.config import (DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR,
+                          DEFAULT_VENV, LocalConfig, NetConfig, load_config,
+                          save_local, save_net)
 
 from server.capabilities import probe_capabilities, validate_cmd_flags
 from server.jobs import Job, JobRegistry
@@ -437,23 +438,40 @@ def eval_baseline(req: BaselineRequest) -> dict:
 
 @router.put("/paths")
 def put_paths(req: PathsRequest) -> dict:
-    """改本机路径四件套并写回 config.yaml。"""
-    CFG.local = LocalConfig(repo=req.repo, venv=req.venv,
-                            task_dir=req.task_dir, hf_cache=req.hf_cache)
-    save_local(CFG.local)
-    return {"message": "已写入 config.yaml"}
+    """改本机路径四件套并写回 config.yaml（空字段回填默认值，同 legacy do_save_env）。"""
+    try:
+        CFG.local = LocalConfig(
+            repo=(req.repo or "").strip() or DEFAULT_REPO,
+            venv=(req.venv or "").strip() or DEFAULT_VENV,
+            task_dir=(req.task_dir or "").strip() or DEFAULT_TASK_DIR,
+            hf_cache=(req.hf_cache or "").strip() or DEFAULT_HF_CACHE)
+        save_local(CFG.local)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "save_failed",
+                                         "message": f"保存失败: {e}", "detail": ""}) from e
+    return {"message": "已写入 config.yaml（立即生效，无需重启）"}
 
 
 @router.put("/net")
 def put_net(req: NetRequest) -> dict:
     """改网络模式并写回 net.json。"""
-    CFG.net = NetConfig(mode=req.mode, proxy=req.proxy)
-    save_net(CFG.net)
-    return {"message": "已写入 net.json"}
+    try:
+        CFG.net = NetConfig(mode=(req.mode or "").strip() or "auto",
+                            proxy=(req.proxy or "").strip())
+        save_net(CFG.net)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "save_failed",
+                                         "message": f"保存失败: {e}", "detail": ""}) from e
+    return {"message": "已写入 net.json（立即生效）"}
 
 
 @router.post("/net/test")
 def net_test() -> dict:
     """测当前代理配置是否可用。"""
-    ok, detail = runner.test_proxy(CFG)
+    try:
+        ok, detail = runner.test_proxy(CFG)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "test_failed",
+                                         "message": f"测试失败: {type(e).__name__}: {e}",
+                                         "detail": ""}) from e
     return {"ok": ok, "detail": detail}

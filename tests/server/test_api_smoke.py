@@ -14,7 +14,8 @@ import server.api as api
 from server.jobs import JobRegistry
 from webui import runner as runner_mod
 from webui import vocab as vocab_mod
-from webui.config import AppConfig, LocalConfig, NetConfig
+from webui.config import (DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR,
+                          DEFAULT_VENV, AppConfig, LocalConfig, NetConfig)
 from webui.runner import HostStatus
 
 
@@ -428,10 +429,8 @@ def test_venv_install(client, monkeypatch, tmp_path):
     j = api.REGISTRY.get(jid)
     assert j is not None
     assert j.kind == "venv" and j.task is None
-    # poller 的 glob 只看 /tmp 前缀，直接指定 tmp 日志路径（tail_log 已被 fixture mock）；
-    # 无 marker + 包装线程退出（_done）⇒ poller 判 done
-    j.log_path = str(tmp_path / "venv.log")
-    for _ in range(100):   # 等包装线程跑完 + poller 判终态
+    # 端到端：ensure_venv 早退不写 /tmp 日志 ⇒ poller 靠 _done=True 判 done
+    for _ in range(200):
         if j.state in ("done", "failed"):
             break
         time.sleep(0.05)
@@ -439,11 +438,39 @@ def test_venv_install(client, monkeypatch, tmp_path):
     assert j.state == "done"
 
 
+def test_venv_install_with_log(client, monkeypatch, tmp_path):
+    """有日志路径（真实安装流）：marker 判定优先于 _done。"""
+    import server.jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "_sleep", lambda s: time.sleep(0.01))
+    monkeypatch.setattr(api.runner, "ensure_venv", lambda log, cfg: None)
+    r = client.post("/api/venv")
+    assert r.status_code == 202
+    j = api.REGISTRY.get(r.json()["job_id"])
+    assert j is not None
+    j.log_path = str(tmp_path / "venv.log")
+    monkeypatch.setattr(api.runner, "tail_log",
+                        lambda path, tail_bytes=20000: "VENV_DONE rc=0\n")
+    for _ in range(200):
+        if j.state in ("done", "failed"):
+            break
+        time.sleep(0.05)
+    assert j.state == "done"
+
+
 def test_eval_env_install(client, monkeypatch):
     monkeypatch.setattr(api.runner, "ensure_eval_env", lambda log, cfg: None)
+    import server.jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "_sleep", lambda s: time.sleep(0.01))
     r = client.post("/api/eval-env")
     assert r.status_code == 202
-    assert r.json()["job"]["kind"] == "eval_env"
+    j = api.REGISTRY.get(r.json()["job_id"])
+    assert j is not None
+    assert j.kind == "eval_env"
+    for _ in range(200):
+        if j.state in ("done", "failed"):
+            break
+        time.sleep(0.05)
+    assert j.state == "done"
 
 
 def test_abort_job(client):
@@ -510,6 +537,36 @@ def test_put_paths_and_net(client, monkeypatch, tmp_path):
     assert r2.status_code == 200
     assert net_file.exists()
     assert json.loads(net_file.read_text())["mode"] == "manual"
+
+
+def test_put_paths_empty_falls_back_to_defaults(client, monkeypatch, tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    monkeypatch.setattr(api, "save_local",
+                        lambda local: cfg_file.write_text("{}"))
+    r = client.put("/api/paths", json={"repo": "", "venv": "", "task_dir": "", "hf_cache": ""})
+    assert r.status_code == 200
+    assert (api.CFG.local.repo, api.CFG.local.venv,
+            api.CFG.local.task_dir, api.CFG.local.hf_cache) == \
+        (DEFAULT_REPO, DEFAULT_VENV, DEFAULT_TASK_DIR, DEFAULT_HF_CACHE)
+
+
+def test_put_paths_save_failed(client, monkeypatch):
+    def _boom(local):
+        raise OSError("disk full")
+    monkeypatch.setattr(api, "save_local", _boom)
+    r = client.put("/api/paths", json={
+        "repo": "/a", "venv": "/b", "task_dir": "/c", "hf_cache": "/d"})
+    assert r.status_code == 500
+    assert r.json()["detail"]["code"] == "save_failed"
+
+
+def test_net_test_failed(client, monkeypatch):
+    def _boom(cfg, url=""):
+        raise TimeoutError("代理超时")
+    monkeypatch.setattr(api.runner, "test_proxy", _boom)
+    r = client.post("/api/net/test")
+    assert r.status_code == 500
+    assert r.json()["detail"]["code"] == "test_failed"
 
 
 def test_net_test(client, monkeypatch):
