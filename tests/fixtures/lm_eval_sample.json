@@ -1,0 +1,7 @@
+{
+  "results": {
+    "gpqa_diamond_cot_zeroshot": {"acc,none": 0.3214, "acc_stderr,none": 0.0213, "alias": "gpqa_diamond"},
+    "mmlu": {"acc,none": 0.6812, "acc_stderr,none": 0.0068, "alias": "mmlu"},
+    "ifeval": {"prompt_level_strict_acc,none": 0.7129, "inst_level_strict_acc,none": 0.8341, "alias": "ifeval"}
+  }
+}
