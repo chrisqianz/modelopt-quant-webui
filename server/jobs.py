@@ -1,0 +1,302 @@
+"""后台任务 registry + 5s 轮询 poller + SSE 扇出 + 落盘/启动重挂。
+
+量化/评测任务由 webui.runner 起 nohup 进程（有 ``runner.Task``）；
+venv/eval_env 安装类任务没有 Task（``task=None``），靠 marker-tail
+（``VENV_DONE rc=`` / ``EVAL_ENV_DONE rc=``）+ 包装线程三条件判终态。
+
+线程模型：poller 每 5s 一跳，读日志尾部、解析进度、状态变化落盘
+``task_path/<job_id>/job.json``，并把 log/progress/state 三事件
+``call_soon_threadsafe`` 扇出到各订阅者 asyncio.Queue；SSE 端先按
+Last-Event-ID 重放已读游标之后的日志（``log_offset`` 为去重游标），
+再实时消费队列。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import glob
+import json
+import os
+import re
+import threading
+import time
+import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+
+from webui import progress, runner
+
+
+_TERMINAL = ("done", "failed", "aborted")
+
+
+def _sleep(seconds: float) -> None:
+    """轮询间隔：模块级函数，测试 patch server.jobs._sleep 即可，
+    不要 patch time.sleep（它 patch 的是全局 time 模块，测试的假实现
+    内部再调 time.sleep 会无限递归）。"""
+    time.sleep(seconds)
+
+
+@dataclass
+class Job:
+    id: str
+    kind: str                 # quant / eval / venv / eval_env
+    task: runner.Task | None   # venv/eval_env 类没有 Task，是 None
+    state: str                # starting / running / done / failed / aborted
+    log_path: str
+    cmd: str
+    export_dir: str = ""
+    version: str = ""
+    commit: str = ""
+    started_at: float = field(default_factory=time.time)
+    log_offset: int = 0       # SSE 续传游标 = 日志已读字节数
+    _subscribers: list = field(default_factory=list, repr=False)  # [(queue, loop), ...]
+    _done: bool = field(default=False, repr=False)    # venv/eval_env 包装线程已退出
+    _exc: BaseException | None = field(default=None, repr=False)
+
+
+class JobRegistry:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self._jobs: dict[str, Job] = {}
+
+    # ---------------------------------------------------------------- create/list
+
+    def create(self, kind, task, cmd, export_dir="", version="", commit="") -> Job:
+        job = Job(
+            id=kind + "_" + time.strftime("%Y%m%d-%H%M%S") + "_" + uuid.uuid4().hex[:6],
+            kind=kind,
+            task=task,
+            state="starting",
+            log_path=task.log_path if task is not None else "",
+            cmd=cmd,
+            export_dir=export_dir,
+            version=version,
+            commit=commit,
+        )
+        self._jobs[job.id] = job
+        return job
+
+    def get(self, job_id) -> Job | None:
+        return self._jobs.get(job_id)
+
+    def list(self) -> list[Job]:
+        """活跃(starting/running)在前、历史在后，各自 started_at 倒序。"""
+        active = [j for j in self._jobs.values() if j.state in ("starting", "running")]
+        done = [j for j in self._jobs.values() if j.state not in ("starting", "running")]
+        active.sort(key=lambda j: j.started_at, reverse=True)
+        done.sort(key=lambda j: j.started_at, reverse=True)
+        return active + done
+
+    # ---------------------------------------------------------------- abort
+
+    def abort(self, job_id) -> str:
+        job = self.get(job_id)
+        if job is None:
+            return ""
+        if job.task is not None:
+            runner.abort_task(job.task)
+        job.state = "aborted"
+        if job.task is None:
+            # 包装线程（venv 类）没有 pid 可杀：置 _done，poller 下轮
+            # 见 _done 即退出，不再写 done/failed。
+            job._done = True
+        self.persist(job)
+        return job.state
+
+    # ---------------------------------------------------------------- 落盘
+
+    def persist(self, job) -> None:
+        d = self.cfg.local.task_path / job.id
+        d.mkdir(parents=True, exist_ok=True)
+        task = job.task
+        payload = {
+            "id": job.id,
+            "pid": (task.pid if task is not None and task.pid else ""),
+            "log_path": job.log_path,
+            "cmd": job.cmd,
+            "state": job.state,
+            "export_dir": job.export_dir,
+            "kind": job.kind,
+            "version": job.version,
+            "commit": job.commit,
+            "started_at": job.started_at,
+            "done_marker": (task.done_marker if task is not None and task.done_marker else ""),
+        }
+        (d / "job.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    # ---------------------------------------------------------------- 启动重挂
+
+    def reload(self) -> list[Job]:
+        """扫 task_path/*/job.json：终态直接收编；pid 存活重挂 poller；
+        进程已死且未终态的，读日志尾判终态（venv 看 marker，quant/eval 保守 failed）。"""
+        loaded = []
+        pattern = str(self.cfg.local.task_path / "*" / "job.json")
+        for path in sorted(glob.glob(pattern)):
+            try:
+                with open(path) as f:
+                    raw = json.load(f)
+            except (OSError, ValueError):
+                continue
+            job = Job(
+                id=raw.get("id") or os.path.basename(os.path.dirname(path)),
+                kind=raw.get("kind", ""),
+                task=None,
+                state=raw.get("state", "failed"),
+                log_path=raw.get("log_path", ""),
+                cmd=raw.get("cmd", ""),
+                export_dir=raw.get("export_dir", ""),
+                version=raw.get("version", ""),
+                commit=raw.get("commit", ""),
+                started_at=float(raw.get("started_at") or time.time()),
+            )
+            state = job.state
+            if state in ("done", "failed", "aborted"):
+                # 1) 已终态：原样收编，不挂 poller。
+                self._jobs[job.id] = job
+                loaded.append(job)
+                continue
+            pid = str(raw.get("pid") or "").strip()
+            if pid and _pid_alive(int(pid)):
+                # 2) 进程还活着：重建 Task，重新接管轮询。
+                job.task = runner.Task(
+                    task_id=job.id,
+                    remote_cmd=job.cmd,
+                    log_path=job.log_path,
+                    pid=pid,
+                    state="running",
+                    started_at=job.started_at,
+                    done_marker=raw.get("done_marker", ""),
+                    pkill_pattern="",
+                )
+                job.state = "running"
+                self._jobs[job.id] = job
+                self.start_poller(job)
+                loaded.append(job)
+                continue
+            # 3) pid 空或已死（state 仍是 starting/running）：读日志尾判终态。
+            if not job.log_path:
+                job.state = "failed"
+            elif job.kind == "venv":
+                tail = runner.tail_log(job.log_path, 4000)
+                job.state = "done" if "VENV_DONE rc=0" in tail else "failed"
+            elif job.kind == "eval_env":
+                tail = runner.tail_log(job.log_path, 4000)
+                job.state = "done" if "EVAL_ENV_DONE rc=0" in tail else "failed"
+            else:
+                # quant/eval：进程死了但没写 done marker，保守判 failed。
+                job.state = "failed"
+            self._jobs[job.id] = job
+            loaded.append(job)
+        return loaded
+
+    # ---------------------------------------------------------------- poller
+
+    def start_poller(self, job) -> None:
+        threading.Thread(target=self._poll, args=(job,), daemon=True,
+                         name=f"job-{job.id}").start()
+
+    def _poll(self, job) -> None:
+        # 异常安全：poller 是后台线程，任何一轮抛异常（日志被删、
+        # 假实现递归等）都不能让线程静默死掉——否则 job 永久卡 running，
+        # SSE 客户端永远等不到 state 事件。任何异常一律判 failed + 广播。
+        while job.state not in _TERMINAL:
+            terminal = False
+            try:
+                if job.kind in ("quant", "eval"):
+                    runner.poll_task(job.task)
+                    raw = runner.read_log(job.task, 30000)
+                    rep = progress.parse(raw)
+                    terminal = job.task.state != "running"
+                    # 广播
+                    job.log_offset = len(raw)
+                    self._broadcast(job, "log", {"tail": raw[-30000:]})
+                    self._broadcast(job, "progress", dataclasses.asdict(rep))
+                else:  # venv / eval_env
+                    # log_path 为空时先 glob 定位真实日志（ensure_venv 内部自己 mkstemp）
+                    if not job.log_path:
+                        prefix = "/tmp/modelopt_venv_setup_" if job.kind == "venv" else "/tmp/modelopt_eval_env_"  # noqa: S108
+                        cands = [p for p in glob.glob(prefix + "*.log")
+                                 if p.endswith(".log") and os.path.getmtime(p) >= job.started_at]
+                        if cands:
+                            job.log_path = max(cands, key=os.path.getmtime)
+                            self.persist(job)
+                    if not job.log_path:
+                        _sleep(5)
+                        continue
+                    raw = runner.tail_log(job.log_path, 30000)
+                    rep = progress.parse_install(raw.splitlines())
+                    # 终态判定三选一：(a) 日志 marker (b) 包装线程退出无异常 (c) 有异常
+                    m = re.search(r"(VENV_DONE|EVAL_ENV_DONE) rc=(\d+)", raw)
+                    if m:
+                        terminal = True
+                        job.state = "done" if m.group(2) == "0" else "failed"
+                    elif job._done:      # 包装线程已退出（venv 已存在早退不写 marker 的情况）
+                        terminal = True
+                        job.state = "failed" if job._exc is not None else "done"
+                    # 广播
+                    job.log_offset = len(raw)
+                    self._broadcast(job, "log", {"tail": raw[-30000:]})
+                    self._broadcast(job, "progress", dataclasses.asdict(rep))
+            except Exception:
+                terminal = True
+                job.state = "failed"
+            if terminal:
+                if job.kind in ("quant", "eval") and job.state not in _TERMINAL:
+                    job.state = "done" if job.task.state == "done" else "failed"
+                self.persist(job)
+                self._broadcast(job, "state", {"state": job.state})
+                break
+            _sleep(5)
+
+    # ---------------------------------------------------------------- SSE 扇出
+
+    def subscribe(self, job, last_event_id="") -> tuple[asyncio.Queue, int]:
+        q = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        job._subscribers.append((q, loop))
+        start = int(last_event_id) if last_event_id.isdigit() else job.log_offset
+        return q, start
+
+    async def sse_stream(self, job, q, start_offset) -> AsyncIterator[str]:
+        # 1) 重放：先读当前日志全量，吐出 start_offset 之后的增量。
+        if job.task is not None:
+            raw = runner.read_log(job.task, 2 ** 20)
+        else:
+            raw = runner.tail_log(job.log_path, 2 ** 20) if job.log_path else ""
+        if len(raw) > start_offset:
+            yield _sse_line("log", len(raw), {"tail": raw[start_offset:]})
+            replay_to = len(raw)
+        else:
+            replay_to = start_offset
+        # 2) 实时：消费队列，按去重游标跳过已重放过的 log 事件。
+        while True:
+            item = await q.get()
+            if item["type"] == "log" and item["id"] <= replay_to:
+                continue
+            yield _sse_line(item["type"], item["id"], item["data"])
+            if item["type"] == "state" and item["data"]["state"] in ("done", "failed", "aborted"):
+                break
+
+    def _broadcast(self, job, evt, data) -> None:
+        item = {"type": evt, "data": data, "id": job.log_offset}
+        for q, loop in list(job._subscribers):
+            loop.call_soon_threadsafe(q.put_nowait, item)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _sse_line(evt: str, evt_id, data) -> str:
+    """progress 事件丢弃 bar 字段（纯展示，重放/续传用不上）。"""
+    if evt == "progress" and isinstance(data, dict):
+        data = {k: v for k, v in data.items() if k != "bar"}
+    return f"event: {evt}\nid: {evt_id}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
