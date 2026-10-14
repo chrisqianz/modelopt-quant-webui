@@ -55,7 +55,7 @@ def extract_flags(repo: Path) -> list[str]:
         src = src_path.read_text()
     except OSError:
         return []
-    found = re.findall(r"add_argument\(\s*['\"](--[a-zA-Z0-9_]+)", src)
+    found = re.findall(r"add_argument\s*\(\s*['\"](--[a-zA-Z0-9_]+)", src)
     return list(dict.fromkeys(found))
 
 
@@ -71,15 +71,20 @@ def probe_capabilities(cfg: AppConfig) -> dict:
         "error": "",
     }
     repo = Path(cfg.local.repo)
+    # git -C 后的路径必须走 q_remote（shlex.quote + expanduser），与项目惯例一致，
+    # 避免 repo 配置含特殊字符时经 bash -c 注入
+    repo_q = runner.q_remote(str(repo))
     try:
         rc, out_v, _ = runner.run_shell(
-            f"git -C {repo} describe --tags --always 2>/dev/null || echo unknown")
+            f"git -C {repo_q} describe --tags --always 2>/dev/null || echo unknown")
         out["version"] = out_v.strip() or "unknown"
         rc, out_c, _ = runner.run_shell(
-            f"git -C {repo} rev-parse --short HEAD 2>/dev/null || echo unknown")
+            f"git -C {repo_q} rev-parse --short HEAD 2>/dev/null || echo unknown")
         out["commit"] = out_c.strip() or "unknown"
         flags_all = extract_flags(repo)
         out["flags_all"] = flags_all
+        if not flags_all and not repo.joinpath(*_HF_PTQ_RELPATH).exists():
+            out["error"] = f"hf_ptq.py 不存在: {repo.joinpath(*_HF_PTQ_RELPATH)}"
         ui_values = list(FLAG_UI.values())
         out["mapped"] = [f for f in ui_values if f in flags_all]
         out["unmapped"] = [f for f in flags_all if f not in ui_values]

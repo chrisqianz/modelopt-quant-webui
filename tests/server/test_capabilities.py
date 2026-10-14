@@ -86,6 +86,7 @@ def test_probe_capabilities_missing_file_sets_flags_empty(tmp_path, monkeypatch)
     assert out["mapped"] == []
     assert out["unmapped"] == []
     assert out["missing"] == list(FLAG_UI.values())
+    assert out["error"].startswith("hf_ptq.py 不存在")  # B3: docstring 承诺兑现
 
 
 def test_probe_capabilities_error_on_exception(tmp_path, monkeypatch):
