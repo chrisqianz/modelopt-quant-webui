@@ -1,28 +1,39 @@
 """ModelOpt 量化 WebUI 主入口（Gradio）。
 
-布局：顶部 host + 状态栏 → [量化] tab（模型 → 量化配置 → 校准数据集 →
-高级参数 → 命令预览 → 启动/日志 → 结果校验）→ [评测] tab（vLLM 部署 +
-lm-eval 跑「量化 vs 基线」对比，回答"量化有没有吃瘪"）。
+布局：状态栏（GPU 探活 / venv / 显存）→ [量化] tab（模型 → 量化配置 →
+校准数据集 → 高级参数 → 命令预览 → 启动/日志 → 结果校验）→ [评测] tab
+（vLLM 部署 + lm-eval 跑「量化 vs 基线」对比，回答"量化有没有吃瘪"）。
 
-机器无关：既能从开发机 SSH 驱动 GPU 机器，也能整目录搬到 GPU 机器上直接跑（
-机器模式 = 本机）。路径与代理地址一律在 UI 里填，代码里不写死。
+跑在 GPU 机器上，浏览器从局域网打开。路径与代理地址一律在 UI 里填，
+代码里不写死。
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shlex
 import time
 
 import gradio as gr
+import gradio.themes as gr_themes
 
-from webui import runner, validate, vocab
-from webui import progress
+from webui import progress, runner, validate, vocab
 from webui.config import (
-    DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR, DEFAULT_VENV, EXEC_MODES,
-    MODE_LOCAL, MODE_REMOTE, PROXY_AUTO, PROXY_DIRECT, PROXY_MANUAL, PROXY_MODES,
-    HostConfig, NetConfig, hosts_from_dicts, load_config, save_hosts, save_net)
+    DEFAULT_HF_CACHE,
+    DEFAULT_REPO,
+    DEFAULT_TASK_DIR,
+    DEFAULT_VENV,
+    PROXY_AUTO,
+    PROXY_DIRECT,
+    PROXY_MANUAL,
+    PROXY_MODES,
+    NetConfig,
+    load_config,
+    save_local,
+    save_net,
+)
 from webui.runner import q_remote
 
 CFG = load_config()
@@ -69,28 +80,28 @@ def fmt_val(x) -> str:
 # ---------------------------------------------------------------- 命令拼装
 
 def build_params(a: list) -> dict:
-    """把事件回调位置参数解析成 build_remote_cmd 需要的 dict。
-    a[0] = host_name，a[1..20] 对应 UI 参数区固定顺序（见 INPUT_ORDER）。"""
+    """把事件回调位置参数解析成 build_cmd 需要的 dict。
+    a[0..19] 对应 UI 参数区固定顺序（见 INPUT_ORDER）。"""
     sizes: dict[str, int] = {}
-    for i, name in enumerate(a[7] or []):  # sizes_names 勾选顺序
-        row = a[8][i] if a[8] and i < len(a[8]) else None
+    for i, name in enumerate(a[6] or []):  # sizes_names 勾选顺序
+        row = a[7][i] if a[7] and i < len(a[7]) else None
         if row and row[0] is not None:
             sizes[name] = int(row[0])
     # gradio 6 前端有时会把 (展示名, 值) 对整体发回（多一层 list），取最后一项兜底
-    qf = a[3]
+    qf = a[2]
     if isinstance(qf, (list, tuple)) and qf:
         qf = qf[-1]
-    kv = a[5]
+    kv = a[4]
     if isinstance(kv, (list, tuple)) and kv:
         kv = kv[-1]
     return {
-        "model": a[1], "trust_remote_code": a[2], "qformat": qf,
-        "recipe": a[4], "kv_cache_qformat": kv, "datasets": a[6],
-        "dataset_sizes": sizes, "custom_datasets": a[9],
-        "calib_seq": a[10], "calib_with_images": a[11], "export_path": a[12],
-        "batch_size": a[13], "device": a[14], "attn_implementation": a[15],
-        "use_fsdp2": a[16], "cpu_offload": a[17], "low_memory_mode": a[18],
-        "gpu_max_mem_percentage": a[19], "skip_generate": a[20],
+        "model": a[0], "trust_remote_code": a[1], "qformat": qf,
+        "recipe": a[3], "kv_cache_qformat": kv, "datasets": a[5],
+        "dataset_sizes": sizes, "custom_datasets": a[8],
+        "calib_seq": a[9], "calib_with_images": a[10], "export_path": a[11],
+        "batch_size": a[12], "device": a[13], "attn_implementation": a[14],
+        "use_fsdp2": a[15], "cpu_offload": a[16], "low_memory_mode": a[17],
+        "gpu_max_mem_percentage": a[18], "skip_generate": a[19],
     }
 
 
@@ -111,42 +122,42 @@ def task_slug(model: str) -> str:
     return re.sub(r"[^\w.\-]+", "_", m)[:60] or "model"
 
 
-def check_local_model(host, model: str) -> str:
-    """本地模型跑前在目标机上确认一下，别等几分钟后才告诉你路径写错了。
+def check_local_model(model: str) -> str:
+    """本地模型开跑前在本机确认一下，别等几分钟后才告诉你路径写错了。
     返回 "" = 没问题，否则是给用户看的错误说明。"""
-    probe = (f"P={runner.q_remote(model, host)}; "
+    probe = (f"P={runner.q_remote(model)}; "
              'if [ -d "$P" ]; then '
              'if [ -f "$P/config.json" ]; then echo __OK__; else echo __NOCFG__; fi; '
              "else echo __NODIR__; fi")
-    _, flag, _ = runner.run_remote(host, probe, timeout=30)
+    _, flag, _ = runner.run_shell(probe, timeout=30)
     flag = flag or ""
     if "__OK__" in flag:
         return ""
     if "__NODIR__" in flag:
-        return (f"{host.where}上没有这个目录：{model}\n"
-                "路径要写在执行那一侧的机器上（本机模式=这台，远程模式=远程机）。")
+        return (f"没有找到这个目录：{model}\n"
+                "路径写在 WebUI 所在这台机器上。")
     return f"{model} 在，但里面没有 config.json，不像 HF 模型目录。"
 
 
-def build_remote_cmd(host: runner.HostConfig, p: dict) -> str:
-    """把 UI 参数拼成远程 hf_ptq.py 命令（含 cd 与 venv python）。
+def build_cmd(p: dict) -> str:
+    """把 UI 参数拼成本机 hf_ptq.py 命令（含 cd 与 venv python）。
     会被包进 nohup bash -c '...'，所以 ~ 前缀路径一律走 q_remote 转绝对路径。"""
-    repo = q_remote(host.remote_repo, host)
-    venv = q_remote(host.venv_dir, host)
+    repo = q_remote(CFG.local.repo)
+    venv = q_remote(CFG.local.venv)
     parts = [f"cd {repo} && {venv}/bin/python examples/hf_ptq/hf_ptq.py"]
 
     model = (p.get("model") or "").strip()
     if not model:
         raise gr.Error("请填写模型路径/名称")
     parts.append(f"--pyt_ckpt_path "
-                 f"{q_remote(model, host) if is_local_model(model) else shlex.quote(model)}")
+                 f"{q_remote(model) if is_local_model(model) else shlex.quote(model)}")
     if p.get("trust_remote_code"):
         parts.append("--trust_remote_code")
 
     qfmt = (p.get("qformat") or "").strip()
     recipe = (p.get("recipe") or "").strip()
     if recipe:
-        parts.append(f"--recipe {q_remote(recipe, host) if recipe.startswith(('/', '~')) else shlex.quote(recipe)}")
+        parts.append(f"--recipe {q_remote(recipe) if recipe.startswith(('/', '~')) else shlex.quote(recipe)}")
     elif qfmt:
         parts.append(f"--qformat {shlex.quote(qfmt)}")
     kv = (p.get("kv_cache_qformat") or "none")
@@ -180,7 +191,7 @@ def build_remote_cmd(host: runner.HostConfig, p: dict) -> str:
 
     export = (p.get("export_path") or "").strip()
     if export:
-        parts.append(f"--export_path {q_remote(export, host) if export.startswith(('/', '~')) else shlex.quote(export)}")
+        parts.append(f"--export_path {q_remote(export) if export.startswith(('/', '~')) else shlex.quote(export)}")
 
     parts.append(f"--batch_size {int(p.get('batch_size') or 0)}")
     parts.append(f"--device {shlex.quote(p.get('device') or 'cuda')}")
@@ -204,12 +215,7 @@ def build_remote_cmd(host: runner.HostConfig, p: dict) -> str:
 
 # ---------------------------------------------------------------- 评测脚本
 
-def _ref_path(host: runner.HostConfig, s: str) -> str:
-    """远程路径引用：~ 转绝对，其余 shlex.quote。"""
-    return q_remote(s, host) if s.startswith(("/", "~")) else shlex.quote(s)
-
-
-def build_eval_script(host: runner.HostConfig, quant: str, baseline: str,
+def build_eval_script(quant: str, baseline: str,
                       tasks: list[str], tp: int, port: int,
                       batch: str) -> str:
     """拼评测流水线脚本：读量化元数据选 flag → vLLM 部署量化 checkpoint →
@@ -439,72 +445,23 @@ def _ev_progress(log: str):
 
 # ---------------------------------------------------------------- 页面
 
-def _mode_line(name: str) -> str:
-    """顶栏那颗「跑在哪」的胶囊。"""
-    try:
-        h = CFG.get_host(name)
-    except ValueError:
-        return "**执行位置**：未配置"
-    if h.is_local:
-        return f"**执行位置**：本机（UI 就跑在这台机器上）"
-    return f"**执行位置**：SSH → `{h.ssh}:{h.ssh_port}`（{h.auth_kind}）"
+def _env_line() -> str:
+    """顶栏那颗「跑在哪」的胶囊 —— 只有一台机器，就是这台。"""
+    return "**执行位置**：这台机器"
 
 
-def _net_line(host_name: str = "") -> str:
+def _net_line() -> str:
     """顶栏那颗「HF 下载走哪」的胶囊（不探测，只说当前配置）。"""
     net = CFG.net
     if net.mode == PROXY_DIRECT:
         return "**HF 下载**：直连（不注入代理）"
-    url, note = "", ""
-    try:
-        url, note = runner.proxy_url_for(CFG, CFG.get_host(host_name))
-    except Exception:                # 没配机器时用配置值本身说事
-        pass
-    use = url or net.remote_proxy or net.local_proxy
+    url, note = runner.proxy_url_for(CFG)
+    use = url or net.proxy
     if net.mode == PROXY_MANUAL:
         return f"**HF 下载**：强制代理 `{use or '⚠ 还没填地址'}`" + (f"（{note}）" if note else "")
     if use:
         return f"**HF 下载**：自动 · 直连优先，不通走 `{use}`"
     return "**HF 下载**：自动 · 直连优先（未填代理地址，直连不通就下不动）"
-
-
-def _host_rows() -> list[dict]:
-    return [h.to_dict() for h in CFG.hosts]
-
-
-def _host_list_md(hosts: list[HostConfig]) -> str:
-    if not hosts:
-        return "（还没有机器。下面填一台。）"
-    lines = ["| 机器 | 执行位置 | 认证 | 仓库 |", "|---|---|---|---|"]
-    for h in hosts:
-        repo = h.remote_repo or ("—" if h.is_local else "（未填）")
-        lines.append(f"| **{h.name}** | {h.where} | {h.auth_kind} | `{repo}` |")
-    return "\n".join(lines)
-
-
-def _host_form(h: HostConfig | None):
-    """把表单填成某台机器的现值（h=None = 新增空白）。密码框一律留空。"""
-    v = {} if h is None else dict(name=h.name, mode=h.mode, ssh=h.ssh,
-                                  ssh_port=h.ssh_port, remote_repo=h.remote_repo,
-                                  venv_dir=h.venv_dir, task_dir=h.task_dir,
-                                  hf_cache=h.hf_cache)
-    get = lambda k, dflt: gr.update(value=v.get(k, dflt))  # noqa: E731
-    return (get("name", ""), get("mode", MODE_LOCAL), get("ssh", ""),
-            get("ssh_port", 22), gr.update(value=""), get("remote_repo", DEFAULT_REPO),
-            get("venv_dir", DEFAULT_VENV), get("task_dir", DEFAULT_TASK_DIR),
-            get("hf_cache", DEFAULT_HF_CACHE),
-            gr.update(interactive=True))
-
-
-def _apply_hosts(hosts: list[HostConfig], selected: str) -> str:
-    """保存后把机器灌回 CFG，让所有用 CFG.get_host 的回调立刻看到新值。"""
-    CFG.hosts = hosts
-    names = [h.name for h in hosts]
-    if selected not in names:
-        selected = names[0] if names else ""
-    return selected
-
-
 
 
 MO_CSS = """
@@ -527,12 +484,6 @@ def _build_app() -> gr.Blocks:
     qf_choices = vocab.render_qformat_dropdown(vocab.all_qformats())
     kv_choices0 = vocab.kv_choices()
     ds_all = [d["key"] for d in vocab.DATASETS]
-    names0 = CFG.host_names()
-    first0 = names0[0] if names0 else ""
-    try:
-        host0 = CFG.get_host(first0)
-    except ValueError:
-        host0 = None
 
     with gr.Blocks(title="ModelOpt 量化 WebUI") as app:
         with gr.Row(equal_height=False):
@@ -544,19 +495,17 @@ def _build_app() -> gr.Blocks:
                                value="量化", show_label=False,
                                container=False,
                                elem_classes=["mo-nav"])
-                host_dd = gr.Dropdown(names0, value=first0, label="目标机器")
                 refresh_btn = gr.Button("⟳ 探测", variant="secondary", size="sm")
-                mode_md = gr.Markdown(_mode_line(first0))
-                net_md = gr.Markdown(_net_line(first0))
+                mode_md = gr.Markdown(_env_line())
+                net_md = gr.Markdown(_net_line())
                 venv_btn = gr.Button("一键创建 venv", size="sm")
                 eval_env_btn = gr.Button("一键装评测环境", size="sm")
-                eval_env_st = gr.State("（未探测）")
             with gr.Column(scale=1, min_width=0):
                 status_md = gr.Markdown("点 **⟳ 探测** 看 GPU / venv / 磁盘 / HF 网络实测情况。")
                 venv_log = gr.Markdown("", elem_classes=["mo-log"])
 
                 # ============================================ 量化 =====
-                with gr.Column(visible=True, elem_classes=["mo-pane"]) as pane_quant:
+                with gr.Column(visible=True, elem_classes=["mo-pane"]) as pane_quant:  # noqa: SIM117
                     with gr.Row(equal_height=False):
                         # ---------- 左：参数 ----------
                         with gr.Column(scale=10, min_width=380):
@@ -614,7 +563,7 @@ def _build_app() -> gr.Blocks:
                                                            datatype=["number"])
                                 custom_df = gr.DataFrame(
                                     label="额外数据集（HF 名 或 GPU 机器上的本地路径）",
-                                    headers=["数据集名（HF 名或远程本地路径）", "calib_size"],
+                                    headers=["数据集名（HF 名或本机路径）", "calib_size"],
                                     datatype=["str", "number"], interactive=True)
                                 calib_img_cb = gr.Checkbox(
                                     label="多模态：校准带图像（VLM + 图文混合集时勾）", value=False)
@@ -647,7 +596,7 @@ def _build_app() -> gr.Blocks:
                                         "跑到「加载模型到显存」就说明权重已经下完。")
 
                 # ============================================ 评测 =====
-                with gr.Column(visible=False, elem_classes=["mo-pane"]) as pane_eval:
+                with gr.Column(visible=False, elem_classes=["mo-pane"]) as pane_eval:  # noqa: SIM117
                     with gr.Row(equal_height=False):
                         with gr.Column(scale=10, min_width=380):
                             gr.Markdown("#### 参数")
@@ -692,7 +641,7 @@ def _build_app() -> gr.Blocks:
                                                               "str", "str"])
 
                 # ======================================== 结果对比 =====
-                with gr.Column(visible=False, elem_classes=["mo-pane"]) as pane_recipe:
+                with gr.Column(visible=False, elem_classes=["mo-pane"]) as pane_recipe:  # noqa: SIM117
                     with gr.Row(equal_height=False):
                         with gr.Column(scale=10, min_width=380):
                             gr.Markdown("#### 1 · 取本次导出的量化配方\n"
@@ -715,77 +664,44 @@ def _build_app() -> gr.Blocks:
 
                 # ======================================== 连接设置 =====
                 with gr.Column(visible=False, elem_classes=["mo-pane"]) as pane_conn:
-                    gr.Markdown("机器与代理配置存在 `hosts.json`（保存后 **chmod 600**，"
-                                "只有当前用户可读）。**密码只用于连接这台机器，不进日志、"
-                                "不进命令、不进 git。**")
+                    gr.Markdown("WebUI 就跑在这台机器上，下面的路径都按**本机**解释。"
+                                "改完点保存，立刻重新探测。")
                     with gr.Row(equal_height=False):
                         with gr.Column(scale=10, min_width=340):
-                            gr.Markdown("#### 机器清单")
-                            host_list_md = gr.Markdown(_host_list_md(CFG.hosts))
+                            gr.Markdown("#### 运行环境")
+                            env_note = gr.Markdown("")
+                            ed_repo = gr.Textbox(label="Model-Optimizer 仓库",
+                                                 value=CFG.local.repo,
+                                                 placeholder=DEFAULT_REPO)
+                            ed_venv = gr.Textbox(
+                                label="venv 目录（相对项目根 = 项目内）",
+                                value=CFG.local.venv, placeholder=DEFAULT_VENV,
+                                info="首次用点量化区的「创建 venv」，装完会写在这里")
+                            ed_task = gr.Textbox(label="任务与产物目录",
+                                                 value=CFG.local.task_dir,
+                                                 placeholder=DEFAULT_TASK_DIR,
+                                                 info="产物是 GB 级，建议留在仓库外")
+                            ed_cache = gr.Textbox(label="HuggingFace 缓存",
+                                                  value=CFG.local.hf_cache,
+                                                  placeholder=DEFAULT_HF_CACHE)
                             with gr.Row(equal_height=True):
-                                pick_dd = gr.Dropdown(names0, value=first0,
-                                                      label="选择要改的机器", container=True,
-                                                      scale=3)
-                                new_btn = gr.Button("➕ 新增", size="sm")
-                            with gr.Row(equal_height=True):
-                                test_btn = gr.Button("测试连接", size="sm", scale=2)
-                                del_btn = gr.Button("删除这台", variant="stop", size="sm",
-                                                    scale=2)
-                            host_note = gr.Markdown("")
-                        with gr.Column(scale=12, min_width=380):
-                            gr.Markdown("#### 编辑机器")
-                            ed_name = gr.Textbox(label="名称（下拉里显示这个）",
-                                                 placeholder="5090 工作站 / 本机")
-                            ed_mode = gr.Radio(EXEC_MODES, value=MODE_LOCAL, label="执行位置")
-                            with gr.Row(equal_height=True):
-                                ed_ssh = gr.Textbox(label="SSH 目标 user@host",
-                                                    placeholder="user@192.168.1.20", scale=3)
-                                ed_port = gr.Number(label="端口", value=22, precision=0)
-                            ed_pass = gr.Textbox(label="SSH 密码（留空 = 用密钥/ssh-agent）",
-                                                 type="password",
-                                                 info="sshpass 自动登录：密码不写进命令行，"
-                                                      "也不会出现在日志里")
-                            with gr.Accordion("路径（留空用默认；本机模式按 UI 所在机器解释）",
-                                              open=False):
-                                ed_repo = gr.Textbox(label="ModelOpt 仓库",
-                                                     placeholder=DEFAULT_REPO)
-                                ed_venv = gr.Textbox(label="venv 目录",
-                                                     placeholder=DEFAULT_VENV)
-                                ed_task = gr.Textbox(label="任务目录",
-                                                     placeholder=DEFAULT_TASK_DIR)
-                                ed_cache = gr.Textbox(label="HF 缓存",
-                                                      placeholder=DEFAULT_HF_CACHE)
-                            save_host_btn = gr.Button("💾 保存机器清单", variant="primary")
-
-                    gr.Markdown("---")
-                    with gr.Row(equal_height=False):
+                                save_env_btn = gr.Button("💾 保存路径",
+                                                         variant="primary", size="sm")
+                                venv_env_btn = gr.Button("创建 venv", size="sm")
                         with gr.Column(scale=10, min_width=340):
                             gr.Markdown("#### HuggingFace 下载走哪条网")
-                            gr.Markdown("代理地址**一律手填**，程序不猜也不写死。"
-                                        "填的是 **HF_HTP_PROXY 要用的地址**，"
-                                        "必须从「执行位置」那台机器可达：\n"
-                                        "- 本机模式 → 填这台机器自己的，如 `http://127.0.0.1:7890`\n"
-                                        "- SSH 远程 → 填远程能访问的地址（比如开发机上监听的代理，"
-                                        "要写局域网 IP，`127.0.0.1` 在远程指的是远程自己）")
+                            gr.Markdown("代理地址**一律手填**，程序不猜拓扑。"
+                                        "填的是这台机器自己能连到的地址，"
+                                        "如 `http://127.0.0.1:7890`。")
                             net_mode = gr.Radio(PROXY_MODES, value=CFG.net.mode, label="模式")
-                            net_local = gr.Textbox(label="本机的代理地址（UI 所在机器）",
-                                                   value=CFG.net.local_proxy,
+                            net_proxy = gr.Textbox(label="代理地址",
+                                                   value=CFG.net.proxy,
                                                    placeholder="http://127.0.0.1:7890")
-                            net_remote = gr.Textbox(label="远程机器的代理地址（远程可达）",
-                                                    value=CFG.net.remote_proxy,
-                                                    placeholder="http://192.168.1.10:7890")
                             with gr.Row(equal_height=True):
-                                save_net_btn = gr.Button("💾 保存代理配置", size="sm",
+                                save_net_btn = gr.Button("💾 保存代理", size="sm",
                                                          variant="primary")
-                                test_net_btn = gr.Button("测试代理连通性", size="sm")
+                                test_net_btn = gr.Button("测试连通性", size="sm")
                             net_note = gr.Markdown("")
-                        with gr.Column(scale=10, min_width=340):
-                            gr.Markdown("#### SSH 连接复用")
-                            gr.Markdown("首次连接会用 ControlMaster 建一条主连接（密码只在这一刻用），"
-                                        "之后的探测 / 提交 / tail 全复用，**不再重复认证**，"
-                                        "也不会触发服务器上的爆破检测。换密码或换机器后点下面重建。")
-                            recon_btn = gr.Button("断开复用连接（重连）", size="sm")
-                            conn_note = gr.Markdown("")
 
 
         nav.change(
@@ -797,192 +713,83 @@ def _build_app() -> gr.Blocks:
         # ============================================================ 状态
         qf_val_st = gr.State(DEFAULTS.get("qformat", "nvfp4"))
         kv_val_st = gr.State(DEFAULTS.get("kv_cache_qformat", "none"))
-        hosts_st = gr.State(_host_rows())
         task_state = gr.State(None)
         eval_state = gr.State(None)
 
-        all_inputs = [host_dd, model_in, trc_cb, qf_dd, recipe_in, kv_dd, ds_dd,
+        all_inputs = [model_in, trc_cb, qf_dd, recipe_in, kv_dd, ds_dd,
                       sizes_dd, sizes_table, custom_df, calib_seq_in, calib_img_cb,
                       export_in, bs_in, dev_dd, attn_in, fsdp_cb, offload_cb, lmm_cb,
                       gmp_in, skip_cb]
 
         # ------------------------------------------------------ 通用工具
-        def _hh(items) -> list[HostConfig]:
-            return hosts_from_dicts(items or [])
-
-        def refresh_net(host_name):
-            return gr.update(value=_net_line(host_name))
-
-        def mode_line(host_name):
-            return gr.update(value=_mode_line(host_name))
-
-        # -------------------------------------------------- 机器 CRUD
-        def host_list_md_of(items):
+        def do_save_env(repo, venv, task_dir, hf_cache):
+            """保存运行环境路径并热更新 CFG；返回 (提示, 顶栏环境行)。"""
             try:
-                return _host_list_md(_hh(items))
+                CFG.local.repo = (repo or "").strip() or "~/Model-Optimizer"
+                CFG.local.venv = (venv or "").strip() or ".venvs/modelopt"
+                CFG.local.task_dir = (task_dir or "").strip() or "~/quant-webui-tasks"
+                CFG.local.hf_cache = (hf_cache or "").strip() or "~/.cache/huggingface"
+                save_local(CFG.local)
             except Exception as ex:
-                return f"⚠ {ex}"
+                return gr.update(value=f"⚠ 保存失败：{ex}"), _env_line()
+            return gr.update(value="✅ 已保存（立即生效，无需重启）"), _env_line()
 
-        def pick_host(name, items):
-            """选中一台 → 表单填上它的现值（密码框始终留空）。"""
+        def do_save_net(mode, proxy):
+            """保存 HF 网络设置并热更新 CFG；返回 (提示, 顶栏网络行)。"""
             try:
-                hosts = {h.name: h for h in _hh(items)}
-            except Exception:
-                hosts = {}
-            return _host_form(hosts.get(name))
-
-        def new_host():
-            return _host_form(None)
-
-        def toggle_ssh(mode):
-            show = gr.update(visible=mode == MODE_REMOTE)
-            return show, show, show
-
-        def save_host(editing, name, mode, ssh, port, pwd, repo, venv, task, cache, items):
-            """把表单落成清单里的一行（editing 空 = 新增），然后整表落盘。"""
-            name = (name or "").strip()
-            if not name:
-                return (gr.update(), gr.update(), gr.update(),
-                        "⚠ 名称不能为空", gr.update())
-            rows = [dict(d) for d in (items or [])]
-            entry = {"name": name, "mode": mode or MODE_LOCAL, "ssh": (ssh or "").strip(),
-                     "ssh_port": port or 22, "password": pwd or "",
-                     "remote_repo": (repo or "").strip(), "venv_dir": (venv or "").strip(),
-                     "task_dir": (task or "").strip(), "hf_cache": (cache or "").strip()}
-            hit = next((i for i, d in enumerate(rows)
-                        if str(d.get("name") or "").strip() == (editing or name)), None)
-            if hit is None:
-                if any(str(d.get("name") or "").strip() == name for d in rows):
-                    return (gr.update(), gr.update(), gr.update(),
-                            f"⚠ 已有同名机器：{name}", gr.update())
-                rows.append(entry)
-                action = "已新增"
-            else:
-                if not (pwd or "").strip() and not (rows[hit].get("password") or ""):
-                    pass                      # 两条都空 = 明确用密钥
-                elif not (pwd or "").strip():
-                    entry["password"] = rows[hit]["password"]   # 没重填 = 保留旧密码
-                rows[hit] = entry
-                action = "已更新"
-            try:
-                hosts = _hh(rows)
+                CFG.net = NetConfig(mode=(mode or PROXY_AUTO).strip(),
+                                    proxy=(proxy or "").strip())
+                save_net(CFG.net)
             except Exception as ex:
-                return (gr.update(), gr.update(), gr.update(), f"⚠ {ex}", gr.update())
-            save_hosts(hosts)
-            sel = _apply_hosts(hosts, editing or name)
-            note = (f"✅ {action} **{name}**（{hosts_from_dicts([entry])[0].where} · "
-                    f"{hosts_from_dicts([entry])[0].auth_kind}）→ hosts.json（权限 600）")
-            return (gr.update(choices=[h.name for h in hosts], value=sel),
-                    gr.update(choices=[h.name for h in hosts], value=name),
-                    host_list_md_of(hosts), note,
-                    gr.update(value=[h.to_dict() for h in hosts]))
+                return gr.update(value=f"⚠ 保存失败：{ex}"), _net_line()
+            return gr.update(value="✅ 已保存（立即生效）"), _net_line()
 
-        def del_host(name, items):
-            rows = [dict(d) for d in (items or [])
-                    if str(d.get("name") or "").strip() != (name or "").strip()]
-            if len(rows) == len(items or []):
-                return (gr.update(), gr.update(), gr.update(),
-                        "⚠ 先在上方选中要删除的机器", gr.update())
+        def do_test_net():
+            """按当前已保存的网络设置实测一次 HF 连通性。"""
             try:
-                hosts = _hh(rows)
+                ok, detail = runner.test_proxy(CFG)
+                return ("✅ 200/2xx 通过" if ok else "⚠ 未通过") + f"：{detail}"
             except Exception as ex:
-                return (gr.update(), gr.update(), gr.update(),
-                        f"⚠ 至少保留一台机器（{ex}）", gr.update())
-            save_hosts(hosts)
-            sel = _apply_hosts(hosts, "")
-            return (gr.update(choices=[h.name for h in hosts], value=sel),
-                    gr.update(choices=[h.name for h in hosts], value=""),
-                    host_list_md_of(hosts), f"🗑 已删除 {name}",
-                    gr.update(value=[h.to_dict() for h in hosts]))
+                return f"⚠ 测试失败：{type(ex).__name__}: {ex}"
 
-        def test_conn(name):
-            try:
-                host = CFG.get_host(name)
-            except ValueError as ex:
-                return f"⚠ {ex}"
-            if host.is_local:
-                ok, text = runner.check_connection(host)
-                return ("✅ 本机可用：" if ok else "⚠ 本机检查：") + text
-            err = runner.ensure_master(host, force=True)
-            if err:
-                return f"⚠ {err}"
-            ok, text = runner.check_connection(host)
-            return ("✅ " if ok else "⚠ ") + text
-
-        def reconnect(name):
-            try:
-                host = CFG.get_host(name)
-            except ValueError as ex:
-                return f"⚠ {ex}"
-            runner.drop_master(host)
-            return f"已断开 {host.identity} 的复用连接，下次操作会重连。"
-
-        # -------------------------------------------------- 代理配置
-        def net_of(mode, local, remote):
-            return NetConfig(mode=mode or PROXY_AUTO,
-                             remote_proxy=(remote or "").strip(),
-                             local_proxy=(local or "").strip())
-
-        def save_net_cfg(mode, local, remote):
-            CFG.net = net_of(mode, local, remote)
-            save_net(CFG.net)
-            return "✅ 已保存 → hosts.json（权限 600）"
-
-        def test_net(host_name, mode, local, remote):
-            try:
-                host = CFG.get_host(host_name)
-            except ValueError as ex:
-                return f"⚠ {ex}"
-            CFG.net = net_of(mode, local, remote)
-            ok, text = runner.test_proxy(CFG, host)
-            return ("✅ " if ok else "⚠ ") + text
-
-        # -------------------------------------------------- 状态探测
-        def do_refresh(host_name, qf_cur, kv_cur):
-            """探测机器 + 刷新 qformat/KV 词表（保持原返回形状）。"""
-            try:
-                host = CFG.get_host(host_name)
-            except ValueError as ex:
-                return (f"⚠ {ex}", gr.update(), qf_cur, gr.update(), kv_cur)
-            st = runner.probe_host(host, app_cfg=CFG)
-            md = f"**{host.identity}**\n"
+        def do_refresh(qf_cur, kv_cur):
+            """刷新状态栏 + 重新扫描本机 qformat / kv 词表。"""
+            st = runner.probe_host(CFG)
+            md = "**本机状态**\n"
             if st.error:
                 md += f"⚠ {st.error}\n\n"
             md += " | ".join(f"{k}: {v}" for k, v in st.as_dict().items())
-            qf = {"model": vocab.all_qformats(), "kv": vocab.KV_QFORMATS,
-                  "source": "内置（未连上机器）"}
-            if st.reachable:
-                try:
-                    qf = vocab.fetch_remote_qformats(host)
-                except Exception as ex:
-                    qf["source"] = f"内置（读机器词表失败: {ex}）"
-            choices = vocab.render_qformat_dropdown(qf["model"])
-            kvs = qf.get("kv") or vocab.KV_QFORMATS
-            kv_up = gr.update(choices=kvs)
-            if kv_cur not in kvs:
-                kv_cur, kv_up = (kvs[0] if kvs else "none"), gr.update(choices=kvs,
-                                                                       value=kvs[0])
-            names = [v for _, v in choices]
-            qf_up = gr.update(choices=choices)
-            if qf_cur not in names:
-                qf_cur = names[0] if names else qf_cur
-                qf_up = gr.update(choices=choices, value=qf_cur)
+            try:
+                qf = vocab.scan_qformats(CFG.local.repo)
+            except Exception as ex:
+                qf = {"model": vocab.all_qformats(), "kv": vocab.KV_QFORMATS,
+                      "source": "内置（扫描词表失败）", "error": str(ex)}
+            model_raw = qf.get("model")
+            model_list = [str(v) for v in model_raw] if isinstance(model_raw, list) \
+                else vocab.all_qformats()
+            qf_choices = vocab.render_qformat_dropdown(model_list)
+            if qf_cur not in qf_choices:
+                qf_cur = DEFAULTS.get("qformat", "nvfp4")
+            kv_choices = ["── 内置 ──"] + vocab.kv_choices()
+            kv_raw = qf.get("kv")
+            for v in ([str(x) for x in kv_raw] if isinstance(kv_raw, list) else []):
+                if v not in vocab.KV_QFORMATS and v not in kv_choices:
+                    kv_choices += ["── 机器预设 ──", v] if kv_choices[-1] != "── 机器预设 ──" else [v]
+            if kv_cur not in kv_choices:
+                kv_cur = DEFAULTS.get("kv_cache_qformat", "none")
             md += f"\n\n词表来源: {qf['source']}"
-            return (md, qf_up, qf_cur, kv_up, kv_cur)
+            return (md, gr.update(choices=qf_choices, value=qf_cur), qf_cur,
+                    gr.update(choices=kv_choices, value=kv_cur), kv_cur)
 
         def initial_probe():
-            if not CFG.host_names():
-                return (gr.update(), gr.update(), "（还没配机器）", "nvfp4",
-                        gr.update(), gr.update(), "none")
-            md, qf_up, qf_v, kv_up, kv_v = do_refresh(CFG.host_names()[0], "nvfp4", "none")
-            return (gr.update(value=_mode_line(CFG.host_names()[0])),
-                    gr.update(value=_net_line(CFG.host_names()[0])), md, qf_v,
-                    qf_up, kv_up, kv_v)
+            """启动时填充顶栏两行 + 状态栏占位 + 词表默认值。"""
+            return (_env_line(), _net_line(), "**正在检测本机…**",
+                    DEFAULTS.get("qformat", "nvfp4"), gr.update(),
+                    DEFAULTS.get("kv_cache_qformat", "none"), gr.update())
 
-        # -------------------------------------------------- 命令预览
-        def refresh_preview(host_name, *a):
+        def refresh_preview(*a):
             try:
-                cmd = build_remote_cmd(CFG.get_host(host_name), build_params(list(a)))
+                cmd = build_cmd(build_params(list(a)))
                 return _prettify_cmd(cmd)
             except Exception as ex:
                 return f"（拼参出错: {ex}）"
@@ -991,16 +798,15 @@ def _build_app() -> gr.Blocks:
             return [[1024] for _ in (names or [])] if names else None
 
         # -------------------------------------------------- 量化任务
-        def do_start(host_name, *a):
+        def do_start(*a):
             try:
                 p = build_params(list(a))
-                host = CFG.get_host(host_name)
             except Exception as ex:
                 yield (f"⚠ {ex}", _prog_html(progress.ProgressReport(
                     error=str(ex))), "参数有误", None)
                 return
-            cmd = build_remote_cmd(host, p)
-            st = runner.probe_host(host)
+            cmd = build_cmd(p)
+            st = runner.probe_host(CFG)
             if not st.reachable:
                 yield (f"⚠ 目标不可达: {st.error}", _prog_html(progress.ProgressReport(
                     error=st.error or "不可达")), "启动前检查失败", None)
@@ -1011,7 +817,7 @@ def _build_app() -> gr.Blocks:
                 return
             model = str(p.get("model") or "").strip()
             if is_local_model(model):
-                why = check_local_model(host, model)
+                why = check_local_model(model)
                 if why:
                     yield ("⚠ 模型路径有问题", _prog_html(progress.ProgressReport(error=why)),
                            why, None)
@@ -1020,14 +826,14 @@ def _build_app() -> gr.Blocks:
             if st.gpu_busy:
                 gpu_warn = (f"⚠ GPU 当前 {st.gpu_util}% 占用中：不抢占现有任务，"
                             f"会和它抢显存。确认那是无用进程再启动（「■ 中止」能停自己的）。\n")
-            note = gpu_warn + f"执行位置：{host.where}\n"
+            note = gpu_warn + f"任务目录：{CFG.local.task_dir}\n"
             yield note, _prog_html(progress.ProgressReport(stage_idx=0,
                                                            stage="提交任务")), "任务提交中…", None
             try:
-                task = runner.start_task(host, host.task_dir,
+                task = runner.start_task(CFG, CFG.local.task_dir,
                                          task_slug(model),
                                          str(p.get("export_path") or ""),
-                                         cmd, runner.proxy_for(CFG, host), lambda s: None)
+                                         cmd, runner.proxy_for(CFG), lambda s: None)
             except Exception as ex:
                 yield (note, _prog_html(progress.ProgressReport(error=str(ex))),
                        f"启动失败: {ex}", None)
@@ -1052,14 +858,10 @@ def _build_app() -> gr.Blocks:
             return runner.abort_task(state)
 
         # -------------------------------------------------- 环境准备
-        def do_venv(host_name):
-            try:
-                host = CFG.get_host(host_name)
-            except ValueError as ex:
-                return f"⚠ {ex}"
+        def do_venv():
             buf: list[str] = []
             try:
-                runner.ensure_venv(host, lambda s: buf.append(s), app_cfg=CFG)
+                runner.ensure_venv(lambda s: buf.append(s), CFG)
             except Exception as ex:
                 return f"⚠ 创建失败：{ex}"
             text = "\n".join(buf) or "（无输出）"
@@ -1067,14 +869,10 @@ def _build_app() -> gr.Blocks:
             head = "✅ venv 就绪" if not rep.error else f"⚠ {rep.error}"
             return f"{head} · {rep.detail}\n```\n{text[-4000:]}\n```"
 
-        def do_eval_env(host_name):
-            try:
-                host = CFG.get_host(host_name)
-            except ValueError as ex:
-                return f"⚠ {ex}"
+        def do_eval_env():
             buf: list[str] = []
             try:
-                runner.ensure_eval_env(host, lambda s: buf.append(s), app_cfg=CFG)
+                runner.ensure_eval_env(lambda s: buf.append(s), CFG)
             except Exception as ex:
                 return f"⚠ 安装失败：{ex}"
             text = "\n".join(buf) or "（无输出）"
@@ -1088,11 +886,9 @@ def _build_app() -> gr.Blocks:
                 return "没有已提交的任务（先跑一个任务）", None, "（无数据）", ""
             log = runner.read_log(state, 5000)
             hint = ""
-            try:
+            with contextlib.suppress(Exception):
                 hint = state.remote_cmd.split("--export_path")[-1].split()[0].strip("'\"")
-            except Exception:
-                pass
-            mine = validate.fetch_remote_export(state.host, log, export_dir_hint=hint)
+            mine = validate.scan_export_dir(log, export_dir_hint=hint)
             if mine.error:
                 return f"⚠ {mine.error}", None, "（无数据）", ""
             md = (f"**{mine.source}**\nquant_method: {mine.quant_method}\n"
@@ -1101,7 +897,7 @@ def _build_app() -> gr.Blocks:
             if official.strip():
                 try:
                     off = validate.fetch_official_summary(
-                        official, proxy=CFG.net.local_proxy or "")
+                        official, proxy=runner.proxy_for(CFG))
                     diff = "\n\n".join(validate.diff_summaries(mine, off))
                 except Exception as ex:
                     diff = f"⚠ 官方对照失败: {ex}"
@@ -1111,16 +907,12 @@ def _build_app() -> gr.Blocks:
             return md, validate.to_table_rows(mine), diff, files
 
         # -------------------------------------------------- 评测
-        def do_fetch_baseline(host_name, quant_path):
+        def do_fetch_baseline(quant_path):
             q = (quant_path or "").strip()
             if not q:
                 return "（先填量化模型路径）", gr.update()
-            try:
-                host = CFG.get_host(host_name)
-            except ValueError as ex:
-                return f"⚠ {ex}", gr.update()
-            r, out, _ = runner.run_remote(host, f"cat {q_remote(q, host)}/config.json "
-                                                f"2>/dev/null", timeout=20)
+            r, out, _ = runner.run_shell(f"cat {q_remote(q)}/config.json 2>/dev/null",
+                                         timeout=20)
             if r != 0 or not out.strip():
                 return "⚠ 读不到量化 checkpoint 的 config.json（检查上面路径）", gr.update()
             try:
@@ -1138,28 +930,22 @@ def _build_app() -> gr.Blocks:
                 return []
             return list(EVAL_PRESETS.get(name, []))
 
-        def do_eval(host_name, quant, baseline, tp, port, batch, tasks):
-            try:
-                host = CFG.get_host(host_name)
-            except Exception as ex:
-                yield f"⚠ {ex}", _prog_html(progress.ProgressReport(error=str(ex))), \
-                    "参数有误", None
-                return
-            ok, msg = runner.probe_eval_env(host)
+        def do_eval(quant, baseline, tp, port, batch, tasks):
+            ok, msg = runner.probe_eval_env(CFG)
             if not ok:
                 yield (f"⚠ {msg}", _prog_html(progress.ProgressReport(error=msg)),
                        "请先点上方「一键装评测环境」（vllm + lm_eval）", None)
                 return
-            note = f"执行位置：{host.where}\n"
+            note = f"任务目录：{CFG.local.task_dir}/eval_*\n"
             yield note, _prog_idle("启动评测"), "评测启动中…", None
             try:
-                script = build_eval_script(host, quant, baseline, tasks,
+                script = build_eval_script(quant, baseline, tasks,
                                            int(tp or 1), int(port or 8000),
                                            str(batch or "auto"))
                 ts = time.strftime("%Y%m%d-%H%M%S")
-                tdir = f"{host.task_dir.rstrip('/')}/eval_{ts}"
-                task = runner.start_script_task(host, tdir, script,
-                                                runner.proxy_for(CFG, host),
+                tdir = str(CFG.local.task_path / f"eval_{ts}")
+                task = runner.start_script_task(CFG, tdir, script,
+                                                runner.proxy_for(CFG),
                                                 lambda s: None, pkill_pattern="vllm serve")
             except Exception as ex:
                 yield (note, _prog_html(progress.ProgressReport(error=str(ex))),
@@ -1182,12 +968,8 @@ def _build_app() -> gr.Blocks:
                 return "没有运行中的评测"
             return runner.abort_task(state) + "\n（已连 vllm serve 一起停）"
 
-        def do_fetch_results(host_name):
-            try:
-                host = CFG.get_host(host_name)
-            except Exception as ex:
-                return f"⚠ {ex}", None
-            results = runner.fetch_eval_results(host, host.task_dir)
+        def do_fetch_results():
+            results = runner.fetch_eval_results(str(CFG.local.task_path))
             if not results:
                 return "（没找到 results_*.json）", None
             rows, note = _result_tables(results)
@@ -1196,59 +978,38 @@ def _build_app() -> gr.Blocks:
         # ============================================================ 绑定
         for inp in all_inputs[1:]:
             inp.change(refresh_preview, all_inputs, preview_md)
-        combo_dd.change(lambda c: list(vocab.COMBOS.get(c, [])) if c else [],
-                        combo_dd, ds_dd)
+        combo_dd.change(lambda c: list(vocab.COMBOS.get(c, [])) if c else [], combo_dd, ds_dd)
         sizes_dd.change(sizes_rows, sizes_dd, sizes_table)
 
-        refresh_btn.click(do_refresh, [host_dd, qf_val_st, kv_val_st],
+        # ------------------------------------------------ 状态 / 量化 / 评测
+        refresh_btn.click(do_refresh, [qf_val_st, kv_val_st],
                           [status_md, qf_dd, qf_val_st, kv_dd, kv_val_st])
-        host_dd.change(do_refresh, [host_dd, qf_val_st, kv_val_st],
-                       [status_md, qf_dd, qf_val_st, kv_dd, kv_val_st])
-        host_dd.change(mode_line, host_dd, mode_md)
-        host_dd.change(lambda h: gr.update(value=h), host_dd, pick_dd)
-        host_dd.change(refresh_net, host_dd, net_md)
         ds_dd.change(lambda d: d or [], ds_dd, sizes_dd)
-
-        start_btn.click(do_start, all_inputs, [proxy_note, prog_html, log_box, task_state])
+        start_btn.click(do_start, all_inputs,
+                        [proxy_note, prog_html, log_box, task_state])
         abort_btn.click(do_abort, task_state, proxy_note)
         validate_btn.click(do_validate, [task_state, official_in],
                            [result_md, group_table, diff_md, files_md])
-        venv_btn.click(do_venv, host_dd, venv_log)
-        eval_env_btn.click(do_eval_env, host_dd, venv_log)
+        venv_btn.click(do_venv, None, venv_log)
+        eval_env_btn.click(do_eval_env, None, venv_log)
 
-        fetch_b_btn.click(do_fetch_baseline, [host_dd, ev_q_in], [fetch_b_note, ev_b_in])
+        fetch_b_btn.click(do_fetch_baseline, ev_q_in, [fetch_b_note, ev_b_in])
         ev_preset.change(do_ev_preset, ev_preset, ev_tasks)
-        ev_run.click(do_eval, [host_dd, ev_q_in, ev_b_in, ev_tp, ev_port, ev_batch,
-                               ev_tasks], [ev_note, ev_prog, ev_log, eval_state])
+        ev_run.click(do_eval, [ev_q_in, ev_b_in, ev_tp, ev_port, ev_batch, ev_tasks],
+                     [ev_note, ev_prog, ev_log, eval_state])
         ev_abort.click(do_ev_abort, eval_state, ev_note)
-        ev_fetch.click(do_fetch_results, host_dd, [ev_result_md, ev_table])
+        ev_fetch.click(do_fetch_results, None, [ev_result_md, ev_table])
 
-        # 连接设置
-        pick_dd.change(pick_host, [pick_dd, hosts_st],
-                       [ed_name, ed_mode, ed_ssh, ed_port, ed_pass, ed_repo, ed_venv,
-                        ed_task, ed_cache, save_host_btn])
-        new_btn.click(new_host, None,
-                      [ed_name, ed_mode, ed_ssh, ed_port, ed_pass, ed_repo, ed_venv,
-                       ed_task, ed_cache, save_host_btn])
-        ed_mode.change(toggle_ssh, ed_mode, [ed_ssh, ed_port, ed_pass])
-        save_host_btn.click(
-            save_host,
-            [pick_dd, ed_name, ed_mode, ed_ssh, ed_port, ed_pass, ed_repo, ed_venv,
-             ed_task, ed_cache, hosts_st],
-            [host_dd, pick_dd, host_list_md, host_note, hosts_st])
-        del_btn.click(del_host, [pick_dd, hosts_st],
-                      [host_dd, pick_dd, host_list_md, host_note, hosts_st])
-        test_btn.click(test_conn, pick_dd, host_note)
-        recon_btn.click(reconnect, host_dd, conn_note)
-        net_mode.change(lambda m: (gr.update(interactive=m != PROXY_DIRECT),
-                                   gr.update(interactive=m == PROXY_MANUAL or
-                                             m == PROXY_AUTO)),
-                        net_mode, [net_local, net_remote])
-        save_net_btn.click(save_net_cfg, [net_mode, net_local, net_remote], net_note)
-        test_net_btn.click(test_net, [host_dd, net_mode, net_local, net_remote], net_note)
+        # ------------------------------------------------ 运行环境 / HF 网络
+        save_env_btn.click(do_save_env, [ed_repo, ed_venv, ed_task, ed_cache],
+                           [env_note, mode_md])
+        venv_env_btn.click(do_venv, None, venv_log)
+        save_net_btn.click(do_save_net, [net_mode, net_proxy], [net_note, net_md])
+        test_net_btn.click(do_test_net, None, net_note)
 
         app.load(initial_probe, None,
                  [mode_md, net_md, status_md, qf_val_st, qf_dd, kv_dd, kv_val_st])
+
 
     return app
 
@@ -1273,7 +1034,7 @@ def main() -> None:
 
 
 def _theme() -> gr.Theme:
-    return gr.themes.Ocean(
+    return gr_themes.Ocean(
         primary_hue="emerald", secondary_hue="sky",
         font_mono=["JetBrains Mono", "ui-monospace", "monospace"],
     )

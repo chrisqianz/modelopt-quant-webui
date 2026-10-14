@@ -1,4 +1,4 @@
-"""把远程日志尾部翻成「现在在干什么 + 干了多少」。
+"""把任务日志尾部翻成「现在在干什么 + 干了多少」。
 
 hf_ptq.py 本身几乎不打阶段大字，真正的进度来自 tqdm —— tqdm 写 stderr，
 `2>&1` 落进日志文件后每条进度以 \\r 分隔留在文件里，所以按 \\r 切片取最后
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 # 阶段顺序 = hf_ptq.py 的实际执行顺序；编号用于画「第几步」
 STAGES = [
-    "启动 / 连接远程",
+    "启动",
     "下载模型权重 (HuggingFace)",
     "加载模型到显存",
     "准备校准数据",
@@ -53,13 +53,13 @@ _DONE_MARKERS = (
 _FATAL: list[tuple[str, str]] = [
     ("cuda out of memory", "显存不够（CUDA OOM）：调小 batch_size / 开 --enable_max_memory 或换卡"),
     ("out of memory error", "显存不够（OOM）"),
-    ("no space left on device", "远程磁盘满了"),
-    ("we couldn't connect to huggingface", "远程连不上 huggingface.co：代理没生效，检查「网络与代理」"),
+    ("no space left on device", "磁盘满了"),
+    ("we couldn't connect to huggingface", "连不上 huggingface.co：代理没生效，检查「网络与代理」"),
     ("maximum number of retries exceeded", "HF 重试次数用完：网络不通或被限流"),
-    ("401 client error", "HF 401：私有模型需要 token（远程 HF_TOKEN 或 hf auth login）"),
+    ("401 client error", "HF 401：私有模型需要 token（HF_TOKEN 或 hf auth login）"),
     ("403 client error", "HF 403：无权限访问该仓库"),
     ("repository not found", "HF 仓库不存在或名字写错"),
-    ("traceback (most recent call last)", "远程抛异常退出了"),
+    ("traceback (most recent call last)", "进程抛异常退出了"),
     ("killed", "进程被系统杀掉（多半是内存/显存不足）"),
 ]
 
@@ -168,11 +168,11 @@ def _scan_error(text: str) -> str:
 
 
 def parse(lines_or_text, extra_note: str = "") -> ProgressReport:
-    """解析远程日志尾部。extra_note 用来塞「远程还没输出」这类外部信息。"""
+    """解析任务日志尾部。extra_note 用来塞「任务还没输出」这类外部信息。"""
     text = lines_or_text if isinstance(lines_or_text, str) else "\n".join(lines_or_text)
     rep = ProgressReport()
     if not text.strip():
-        rep.detail = extra_note or "远程还没有输出…"
+        rep.detail = extra_note or "任务还没有输出…"
         return rep
 
     low = text.lower()
@@ -193,7 +193,6 @@ def parse(lines_or_text, extra_note: str = "") -> ProgressReport:
     if m:
         pre = (m.group("pre") or "").strip().rstrip(":").strip()
         pct = max(0.0, min(100.0, float(m.group("pct"))))
-        cur, tot = m.group("cur"), m.group("tot")
         pre_low = pre.lower()
         dataset = pre_low in _DATASET_PREFIX or any(h in pre_low for h in _DATASET_HINT)
         downloading = not dataset and any(h in pre_low for h in _DOWNLOAD_HINT)
@@ -234,7 +233,7 @@ def parse(lines_or_text, extra_note: str = "") -> ProgressReport:
 def parse_install(lines_or_text) -> ProgressReport:
     """uv / pip 安装日志（建 venv、装评测环境用）。"""
     text = lines_or_text if isinstance(lines_or_text, str) else "\n".join(lines_or_text)
-    rep = ProgressReport(stage="安装远程环境", stage_idx=1)
+    rep = ProgressReport(stage="安装环境", stage_idx=1)
     if not text.strip():
         rep.detail = "还没有输出…"
         return rep
@@ -248,7 +247,7 @@ def parse_install(lines_or_text) -> ProgressReport:
     m = _RE_COUNT.search(last) if last else None
     if m and "%" not in last:
         cur, tot = int(m.group("cur")), int(m.group("tot"))
-        if 0 < tot and cur <= tot and tot > 3:
+        if tot > 3 and cur <= tot:
             rep.pct = cur / tot * 100
             rep.bar = _bar(rep.pct)
             rep.detail = f"{cur} / {tot} 个包"
