@@ -1,0 +1,210 @@
+/** 与 server/schemas.py + webui dataclass 逐字对齐的响应类型（2026-10-14 核对）。 */
+
+/** HostStatus（webui/runner.py:73，asdict 原样输出） */
+export interface HostStatus {
+  reachable: boolean
+  gpu: string
+  gpu_util: number | null
+  gpu_mem: string
+  gpu_busy: boolean
+  repo_ok: boolean
+  venv_ok: boolean
+  uv_ok: boolean
+  disk_free: string
+  hf_cache: string
+  hf_direct_ok: boolean
+  hf_proxy_ok: boolean
+  proxy_note: string
+  error: string
+}
+
+/** ProgressReport（webui/progress.py:93） */
+export interface ProgressReport {
+  stage_idx: number
+  stage: string
+  pct: number | null
+  bar: string
+  detail: string
+  item: string
+  done: boolean
+  error: string
+}
+
+/** GET /api/vocab（server/api.py _scan_vocab） */
+export interface VocabData {
+  qformats: string[]
+  kv: [string, string][]
+  datasets: { key: string; desc: string }[]
+  combos: Record<string, string>
+  source?: string
+  error?: string
+}
+
+/** GET /api/capabilities（server/capabilities.py） */
+export interface Capabilities {
+  version: string
+  commit: string
+  flags_all: string[]
+  mapped: string[]
+  unmapped: string[]
+  missing: string[]
+  error: string
+}
+
+/** JobSummary（server/api.py _job_summary） */
+export interface JobSummary {
+  id: string
+  kind: string // quant | eval | venv | eval_env
+  state: string // starting | running | done | failed | aborted
+  started_at: number // epoch 秒
+  export_dir: string
+  version: string
+  commit: string
+  cmd_preview: string
+}
+
+/** GET /api/jobs（active 在前、各自 started_at 倒序） */
+export interface JobList {
+  active: JobSummary[]
+  history: JobSummary[]
+}
+
+/** GET /api/jobs/{id} */
+export interface JobDetail {
+  job: JobSummary
+  state: string
+  log_tail: string
+  progress: ProgressReport
+  result_tables: string[][] | null
+}
+
+/** GET /api/paths */
+export interface Paths {
+  repo: string
+  venv: string
+  task_dir: string
+  hf_cache: string
+}
+
+/** GET /api/net */
+export interface Net {
+  mode: string // auto | direct | manual
+  proxy: string
+}
+
+/** GET /api/bootstrap（首屏一把） */
+export interface Bootstrap {
+  paths: Paths
+  net: Net
+  probe: HostStatus
+  vocab: VocabData
+  capabilities: Capabilities
+  jobs: JobSummary[]
+  defaults: Record<string, unknown>
+}
+
+/** QuantizeParams（server/schemas.py，20 字段，extra=forbid） */
+export interface QuantizeParams {
+  model: string
+  trust_remote_code: boolean
+  qformat: string
+  recipe?: string
+  kv_cache_qformat?: string
+  datasets: string[]
+  dataset_sizes?: Record<string, number>
+  /** 每行 [名称, 条数]；条数可以是 number */
+  custom_datasets?: [string | number, string | number][]
+  calib_seq?: number
+  calib_with_images?: boolean
+  export_path?: string
+  batch_size?: number
+  device?: string
+  attn_implementation?: string
+  use_fsdp2?: boolean
+  cpu_offload?: boolean
+  low_memory_mode?: boolean
+  gpu_max_mem_percentage?: number
+  skip_generate?: boolean
+  extra_args?: string
+}
+
+/** POST /api/preview */
+export interface PreviewResult {
+  cmd: string
+  pretty: string
+  missing_flags: string[]
+  caps_error: string
+}
+
+/** POST /api/quantize · 202 */
+export interface QuantizeStart {
+  job_id: string
+  job: JobSummary
+  warn_gpu: boolean
+}
+
+/** EvalStart（server/schemas.py） */
+export interface EvalStartParams {
+  quant: string
+  baseline?: string
+  tp?: number
+  port?: number
+  batch?: string
+  tasks?: string[]
+}
+
+/** POST /api/eval · 202 */
+export interface JobStart {
+  job_id: string
+  job: JobSummary
+}
+
+/** POST /api/recipe/diff */
+export interface RecipeDiffResult {
+  summary: Record<string, unknown>
+  groups: Record<string, unknown>[]
+  diff: string
+  files: unknown[]
+}
+
+/** POST /api/eval/baseline */
+export interface BaselineResult {
+  baseline: string
+  message: string
+}
+
+/** GET /api/eval/results：rows = [模型, 任务, 指标, 量化, 基线, Δ] */
+export interface EvalResults {
+  rows: string[][]
+  note: string
+  files: string[]
+}
+
+/** GET /api/models/local（C2 最小版） */
+export interface LocalModel {
+  id: string
+  size: string
+  stub: boolean
+}
+
+/** GET /api/artifacts（C1 最小版） */
+export interface Artifact {
+  dir: string
+  model: string
+  ts: string
+  size: string
+  state: string
+}
+
+/** POST /api/net/test */
+export interface NetTestResult {
+  ok: boolean
+  detail: string
+}
+
+/** 统一错误 envelope（server/schemas.py ErrorResponse） */
+export interface ApiErrorBody {
+  code: string
+  message: string
+  detail: string
+}
