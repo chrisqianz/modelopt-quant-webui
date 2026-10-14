@@ -20,10 +20,15 @@ def mount_static(app) -> None:
         return
 
     from fastapi import Request
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, JSONResponse
 
     @app.get("/{path:path}")   # SPA catch-all：文件存在返文件，否则回 index.html
     async def _spa(request: Request, path: str):
+        # 未匹配的 /api/* 不是前端路由：返 404 JSON，不吞成 index.html（docstring 承诺的行为）
+        if path.startswith("api/"):
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "not_found", "message": f"没有这个接口 /api/{path}", "detail": ""}})
         f = (DIST / path) if path else (DIST / "index.html")
         if path and f.is_file():
             return FileResponse(f)

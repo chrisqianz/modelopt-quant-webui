@@ -91,6 +91,21 @@ def test_spa_api_routes_unaffected(tmp_path, monkeypatch):
     assert c.get("/api/health").json() == {"ok": True}
 
 
+def test_spa_unknown_api_path_returns_404_json(tmp_path, monkeypatch):
+    """未匹配的 /api/* 不吞成 index.html，返 404 JSON（不白屏/不假成功）。"""
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html>INDEX</html>")
+    monkeypatch.setattr(static_mod, "DIST", dist)
+    app = FastAPI(title="spa-test3")
+    app.include_router(api.router)
+    static_mod.mount_static(app)
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/api/not-a-real-endpoint")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "not_found"
+
+
 # ---------------------------------------------------------------- token 中间件
 
 def test_token_required(tmp_path, monkeypatch):
