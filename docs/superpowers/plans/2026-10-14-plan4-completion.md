@@ -101,3 +101,40 @@
 
 - **① inline（默认）**：按 m03282 指令直接主会话做，Task 1→6 顺序执行，每 Task 提交。
 - **② subagent-driven**：worker 派工 + 主会话复跑 + 收窄 reviewer（Plan 2 模式，耗时风险高）。
+
+## GPU 机验证记录（2026-10-14）
+
+**单入口终态**：`python app.py` 挂 7861（`/api/*` 23 端点 + SSE + `web/dist` 五区），
+legacy Gradio 已删、`serve.py` 退役、`requirements.txt` 去 `gradio>=4.44`、
+`golden_adapter.py` 拔 `app.py` 依赖（改用 `webui/input_order.py`）。
+
+**GPU 机实测**（chrisqian@192.168.124.39，`uv pip uninstall gradio` + 清残留空目录后）：
+- `import gradio` → `ModuleNotFoundError: No module named 'gradio'`（彻底不可用）
+- 7861 全端点真值 200：health / bootstrap / capabilities / POST probe / vocab /
+  jobs / models/local / artifacts / estimate / eval/results；root 返
+  `index-Cj1jTANf.js`（新 dist）
+- 7862 → `code=000`（无服务，serve.py 已退役）
+
+**回归**：`.venv/bin/python -m pytest -q` = **106 passed**；
+`tsc --noEmit -p tsconfig.app.json` = 0 错。
+
+**逃生口（层 3）**：`--verbose` 等 unmapped flag 经 extra_args 原样追加命令尾，
+禁用字符 `;&|<>\n\t$\`` 触发 400 `bad_params`；`--definitely_not_a_flag` 走差集校验
+400 `unknown_flags`（层 2 兜底仍生效）。
+
+**估算器**：权重量 = hub 缓存目录 `du`（`source=cache`）→ HF API size（`hf_api`）
+→ 未知（`unknown`）；量化后按 qformat 系数折算；KV 从 config.json 精确算或经验式
+回退（`source` 追加 `+kv_estimate`）；与真实显存对比给 `fits` / `short_gib`。
+GPU 机实测：已缓存模型 `Systran/faster-whisper-medium` 走 du 真实 1.5GB +
+KV 经验式；未缓存走 unknown（代理不通，如实标注）。
+
+**C1 产物库**：`/api/artifacts` 返回 `{dir, model, qformat, ts, size, state,
+cmd}`（model/qformat 从 job.json.cmd 或 run.log 首行正则提取）；前端卡片 +
+「生成 vLLM 启动命令」（复制）。
+
+**C2 本机模型列表**：`/api/models/local` 扫 `hf_cache/*/models--*/*/snapshots/*`，
+每条带 `revision`（`refs/main` 首行）+ `size`（du）；stub（无权重）标灰。
+
+**真跑**：显存被 vllm serve 占（>24G），未跑真量化/评测（守 ADR 023 约束）。
+浏览器项：GPU 机无 agent-browser，用后端端点直验替代（root asset hash + 全端点
+HTTP 状态码），未做像素级 UI 截图验证。

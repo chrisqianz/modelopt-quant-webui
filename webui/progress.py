@@ -106,7 +106,7 @@ class ProgressReport:
         return not self.done and not self.error
 
     def markdown(self) -> str:
-        """给 gradio Markdown 用的一小块状态卡。"""
+        """给前端状态卡用的一小块 Markdown。"""
         if self.error:
             return (f"❌ **{self.stage}** — 出错了\n\n"
                     f"> {self.error}\n\n`{self.item}`" if self.item else
