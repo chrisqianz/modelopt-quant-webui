@@ -6,6 +6,7 @@ __all__ = [
     "PreviewRequest",
     "EvalStart",
     "RecipeDiffRequest",
+    "BaselineRequest",
     "PathsRequest",
     "NetRequest",
     "ErrorResponse",
@@ -91,6 +92,14 @@ class NetRequest(BaseModel):
 
     mode: str
     proxy: str = ""
+
+
+class BaselineRequest(BaseModel):
+    """拉基线模型名的请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    quant_path: str
 
 
 class ErrorResponse(BaseModel):

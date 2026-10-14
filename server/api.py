@@ -1,27 +1,33 @@
-"""FastAPI 入口：REST + SSE 只读端点（Task 5 范围）。
+"""FastAPI 入口：REST + SSE 全端点（Task 5 只读 + Task 6 写端点）。
 
-写端点（quantize/eval/...）是 Task 6。所有端点复用 webui.runner /
-webui.vocab / server.capabilities / server.jobs 的既有 API，本模块不
-重复实现探测、拼命令、任务管理逻辑；量化命令串一律走 webui.cmds.build_cmd
-（golden 钉死）。
+所有端点复用 webui.runner / webui.vocab / webui.validate /
+server.capabilities / server.jobs 的既有 API，本模块不重复实现探测、
+拼命令、任务管理逻辑；量化命令串一律走 webui.cmds.build_cmd（golden 钉死）。
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
+import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from webui import progress, runner, vocab
-from webui.cmds import build_cmd, prettify_cmd, result_tables
-from webui.config import load_config
+from webui import progress, runner, validate, vocab
+from webui.cmds import (build_cmd, build_eval_script, check_local_model,
+                        is_local_model, prettify_cmd, result_tables, task_slug)
+from webui.config import (LocalConfig, NetConfig, load_config, save_local,
+                          save_net)
 
 from server.capabilities import probe_capabilities, validate_cmd_flags
 from server.jobs import Job, JobRegistry
-from server.schemas import PreviewRequest
+from server.schemas import (BaselineRequest, EvalStart, NetRequest,
+                            PathsRequest, PreviewRequest, RecipeDiffRequest,
+                            QuantizeParams)
 
 CFG = load_config()
 REGISTRY = JobRegistry(CFG)
@@ -138,13 +144,16 @@ def preview(req: PreviewRequest) -> dict:
     except ValueError as e:
         raise HTTPException(400, detail={"code": "bad_params", "message": str(e), "detail": ""}) from e
     pretty = prettify_cmd(cmd)
-    flags_all = probe_capabilities(CFG)["flags_all"]
-    missing = validate_cmd_flags(cmd, flags_all)
+    caps = probe_capabilities(CFG)
+    # caps 失败（repo 不可读等）时 flags_all=[] 会把合法命令误判成
+    # unknown_flags：error 非空则跳过差集校验，把错误透出给前端。
+    missing = [] if caps.get("error") else validate_cmd_flags(cmd, caps["flags_all"])
     if missing:
         raise HTTPException(400, detail={"code": "unknown_flags",
                                          "message": "本版本没有这些参数",
                                          "detail": missing})
-    return {"cmd": cmd, "pretty": pretty, "missing_flags": []}
+    return {"cmd": cmd, "pretty": pretty, "missing_flags": [],
+            "caps_error": caps.get("error", "")}
 
 
 @router.get("/jobs")
@@ -247,3 +256,204 @@ def artifacts() -> dict:
         out.append({"dir": d.name, "model": model, "ts": str(ts),
                     "size": _du_size(d), "state": state})
     return {"artifacts": out}
+
+
+# ---------------------------------------------------------------- 写端点（Task 6）
+
+def _caps() -> dict:
+    """capabilities 探针（失败不炸，flags_all 空时调用方应跳过校验）。"""
+    return probe_capabilities(CFG)
+
+
+@router.post("/quantize")
+def quantize(req: QuantizeParams) -> JSONResponse:
+    """起量化任务：前置校验 → start_task → create/persist/start_poller → 202。"""
+    p = req.to_build_params_dict()
+    try:
+        cmd = build_cmd(p, CFG)
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "bad_params",
+                                         "message": str(e), "detail": ""}) from e
+    probe = runner.probe_host(CFG)
+    if not probe.reachable:
+        raise HTTPException(400, detail={"code": "unreachable",
+                                         "message": probe.error or "目标不可达", "detail": ""})
+    if not probe.venv_ok:
+        raise HTTPException(400, detail={"code": "venv_missing",
+                                         "message": "量化 venv 不存在，先 POST /api/venv",
+                                         "detail": ""})
+    model = str(p.get("model") or "").strip()
+    if is_local_model(model):
+        why = check_local_model(CFG, model)
+        if why:
+            raise HTTPException(400, detail={"code": "bad_model_path",
+                                             "message": why, "detail": ""})
+    caps = _caps()
+    if not caps.get("error"):
+        missing = validate_cmd_flags(cmd, caps["flags_all"])
+        if missing:
+            raise HTTPException(400, detail={"code": "unknown_flags",
+                                             "message": "本版本没有这些参数",
+                                             "detail": missing})
+    try:
+        task = runner.start_task(CFG, str(CFG.local.task_path),
+                                 task_slug(model), str(p.get("export_path") or ""),
+                                 cmd, runner.proxy_for(CFG), lambda s: None)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "start_failed",
+                                         "message": f"启动失败: {e}", "detail": ""}) from e
+    job = REGISTRY.create("quant", task, cmd, export_dir=str(p.get("export_path") or ""),
+                          version=caps.get("version", ""), commit=caps.get("commit", ""))
+    job.state = "running"
+    REGISTRY.persist(job)
+    REGISTRY.start_poller(job)
+    return JSONResponse(status_code=202, content={
+        "job_id": job.id, "job": _job_summary(job), "warn_gpu": probe.gpu_busy})
+
+
+@router.post("/eval")
+def eval_start(req: EvalStart) -> JSONResponse:
+    """起评测任务：probe_eval_env → build_eval_script → start_script_task → 202。"""
+    ok, why = runner.probe_eval_env(CFG)
+    if not ok:
+        raise HTTPException(400, detail={"code": "eval_env_missing",
+                                         "message": why or "评测环境未就绪", "detail": why})
+    try:
+        script = build_eval_script(req.quant, req.baseline, req.tasks,
+                                   max(req.tp, 1), req.port,
+                                   str(req.batch or "auto"), CFG)
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "bad_params",
+                                         "message": str(e), "detail": ""}) from e
+    caps = _caps()
+    tdir = str(CFG.local.task_path / f"eval_{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        task = runner.start_script_task(CFG, tdir, script, runner.proxy_for(CFG),
+                                        lambda s: None, pkill_pattern="vllm serve")
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "start_failed",
+                                         "message": f"启动失败: {e}", "detail": ""}) from e
+    job = REGISTRY.create("eval", task, "bash run.sh",
+                          version=caps.get("version", ""), commit=caps.get("commit", ""))
+    job.state = "running"
+    REGISTRY.persist(job)
+    REGISTRY.start_poller(job)
+    return JSONResponse(status_code=202, content={"job_id": job.id, "job": _job_summary(job)})
+
+
+def _ensure_job(kind: str, runner_fn, label: str) -> JSONResponse:
+    """venv/eval-env 共用的包装线程模式：task=None，poller 靠 _done/_exc 判终态。"""
+    job = REGISTRY.create(kind, None, label)
+    job.state = "running"
+
+    def _run():
+        try:
+            runner_fn(lambda s: None, CFG)
+        except BaseException as e:  # noqa: BLE001 包装线程必须吞异常交给 poller
+            job._exc = e
+        finally:
+            job._done = True
+
+    threading.Thread(target=_run, daemon=True, name=f"job-{job.id}-ensure").start()
+    REGISTRY.persist(job)
+    REGISTRY.start_poller(job)
+    return JSONResponse(status_code=202, content={"job_id": job.id,
+                                                  "job": _job_summary(job)})
+
+
+@router.post("/venv")
+def venv_install() -> JSONResponse:
+    """创建量化 venv（ensure_venv 起线程，内部自己 mkstemp 写日志）。"""
+    return _ensure_job("venv", runner.ensure_venv, "ensure_venv")
+
+
+@router.post("/eval-env")
+def eval_env_install() -> JSONResponse:
+    """装评测环境（vllm + lm_eval）。"""
+    return _ensure_job("eval_env", runner.ensure_eval_env, "ensure_eval_env")
+
+
+@router.post("/jobs/{job_id}/abort")
+def abort_job(job_id: str) -> dict:
+    """中止 job：REGISTRY.abort（有 task 走 abort_task，无 task 置 _done）。"""
+    job = REGISTRY.get(job_id)
+    if job is None:
+        raise HTTPException(404, detail={"code": "no_job",
+                                         "message": f"job 不存在: {job_id}", "detail": ""})
+    state = REGISTRY.abort(job_id)
+    return {"message": "已发送中止信号", "state": state}
+
+
+@router.post("/recipe/diff")
+def recipe_diff(req: RecipeDiffRequest) -> dict:
+    """对比本次量化产物与官方 recipe 结果（对照 legacy do_validate）。"""
+    job = REGISTRY.get(req.job_id)
+    if job is None:
+        raise HTTPException(404, detail={"code": "no_job",
+                                         "message": f"job 不存在: {req.job_id}", "detail": ""})
+    if job.task is None:
+        raise HTTPException(400, detail={"code": "bad_job",
+                                         "message": "该 job 没有可对照的日志", "detail": ""})
+    log_tail = runner.read_log(job.task, 5000)
+    hint = ""
+    with contextlib.suppress(Exception):
+        hint = job.task.remote_cmd.split("--export_path")[-1].split()[0].strip("'\"")
+    mine = validate.scan_export_dir(log_tail, export_dir_hint=hint)
+    diff = ""
+    if req.official.strip():
+        try:
+            off = validate.fetch_official_summary(req.official, proxy=runner.proxy_for(CFG))
+            diff = "\n\n".join(validate.diff_summaries(mine, off))
+        except Exception as e:  # noqa: BLE001 官方对照失败不炸主产物
+            diff = f"⚠ 官方对照失败: {e}"
+    return {"summary": dataclasses.asdict(mine), "groups": mine.groups,
+            "diff": diff, "files": mine.files}
+
+
+@router.post("/eval/baseline")
+def eval_baseline(req: BaselineRequest) -> dict:
+    """从量化 checkpoint 的 config.json 抽基线模型名（对照 legacy do_fetch_baseline）。"""
+    q = (req.quant_path or "").strip()
+    if not q:
+        raise HTTPException(400, detail={"code": "bad_quant_path",
+                                         "message": "请填量化模型路径", "detail": ""})
+    r, out, _ = runner.run_shell(f"cat {runner.q_remote(q)}/config.json 2>/dev/null",
+                                 timeout=20)
+    if r != 0 or not out.strip():
+        raise HTTPException(400, detail={"code": "bad_quant_path",
+                                         "message": "读不到量化 checkpoint 的 config.json（检查路径）",
+                                         "detail": ""})
+    try:
+        d = json.loads(out)
+        b = (d.get("quantization_config", {}) or {}).get("_name_or_path", "") \
+            or d.get("_name_or_path", "")
+    except Exception:  # noqa: BLE001 解析失败
+        raise HTTPException(400, detail={"code": "bad_quant_path",
+                                         "message": "config.json 解析失败", "detail": ""}) from None
+    if not b or b == q:
+        return {"baseline": "", "message": "config.json 里没有基线模型名，请手填"}
+    return {"baseline": b, "message": "OK"}
+
+
+@router.put("/paths")
+def put_paths(req: PathsRequest) -> dict:
+    """改本机路径四件套并写回 config.yaml。"""
+    CFG.local = LocalConfig(repo=req.repo, venv=req.venv,
+                            task_dir=req.task_dir, hf_cache=req.hf_cache)
+    save_local(CFG.local)
+    return {"message": "已写入 config.yaml"}
+
+
+@router.put("/net")
+def put_net(req: NetRequest) -> dict:
+    """改网络模式并写回 net.json。"""
+    CFG.net = NetConfig(mode=req.mode, proxy=req.proxy)
+    save_net(CFG.net)
+    return {"message": "已写入 net.json"}
+
+
+@router.post("/net/test")
+def net_test() -> dict:
+    """测当前代理配置是否可用。"""
+    ok, detail = runner.test_proxy(CFG)
+    return {"ok": ok, "detail": detail}

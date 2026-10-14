@@ -1,10 +1,11 @@
-"""server/api.py 只读端点冒烟测试（TestClient + monkeypatch，不真跑量化）。
+"""server/api.py 端点冒烟测试（TestClient + monkeypatch，不真跑量化）。
 
 本机无 CUDA：所有 webui.runner 探测/日志/结果函数与 server.capabilities
 的探测都 patch 掉；jobs 单例直接调 REGISTRY.create 造数据。
 """
 
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -109,7 +110,26 @@ def test_preview_ok(client):
     body = r.json()
     assert "--qformat" in body["cmd"]
     assert body["missing_flags"] == []
+    assert body["caps_error"] == ""
     assert "\n" in body["pretty"]   # 多行展示形态
+
+
+def test_preview_caps_error_skips_flag_check(client, monkeypatch):
+    """Task 5 reviewer 建议 1：caps 失败（repo 不可读）时 flags_all=[] 会把
+    合法命令误判 unknown_flags —— error 非空应跳过差集校验。"""
+    monkeypatch.setattr(
+        api, "probe_capabilities",
+        lambda cfg: {"version": "", "commit": "", "flags_all": [],
+                     "mapped": [], "unmapped": [], "missing": [],
+                     "error": "仓库预设目录不可读"})
+    r = client.post("/api/preview", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4",
+        "datasets": ["cnn_dailymail"],
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["missing_flags"] == []
+    assert body["caps_error"] == "仓库预设目录不可读"
 
 
 def test_preview_unknown_flags(client, monkeypatch):
@@ -314,3 +334,186 @@ def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.json() == {"ok": True}
+
+
+# ---------------------------------------------------------------- 写端点（Task 6）
+
+def _probe(venv_ok=True, reachable=True, gpu_busy=False, error=""):
+    return HostStatus(reachable=reachable, gpu="RTX 4090", gpu_util=80 if gpu_busy else 5,
+                      gpu_mem="3/24576 MiB", gpu_busy=gpu_busy, repo_ok=True,
+                      venv_ok=venv_ok, uv_ok=True, disk_free="1.0T",
+                      hf_cache="2.3G", hf_direct_ok=True, hf_proxy_ok=False,
+                      proxy_note="", error=error)
+
+
+def test_quantize_venv_missing(client, monkeypatch):
+    monkeypatch.setattr(api.runner, "probe_host", lambda cfg: _probe(venv_ok=False))
+    r = client.post("/api/quantize", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4",
+        "datasets": ["cnn_dailymail"],
+    })
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "venv_missing"
+
+
+def test_quantize_unreachable(client, monkeypatch):
+    monkeypatch.setattr(api.runner, "probe_host", lambda cfg: _probe(reachable=False, error="ssh 不通"))
+    r = client.post("/api/quantize", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4", "datasets": [],
+    })
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "unreachable"
+
+
+def test_quantize_bad_params_empty_model(client):
+    r = client.post("/api/quantize", json={"model": "", "qformat": "nvfp4", "datasets": []})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "bad_params"
+
+
+def test_quantize_ok_warn_gpu(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api.runner, "probe_host", lambda cfg: _probe(gpu_busy=True))
+    monkeypatch.setattr(api.runner, "start_task",
+                        lambda *a, **k: runner_mod.Task(task_id="t", remote_cmd="c",
+                                                        log_path=str(tmp_path / "x.log"),
+                                                        pid="1", state="running"))
+    r = client.post("/api/quantize", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4",
+        "datasets": ["cnn_dailymail"],
+    })
+    assert r.status_code == 202
+    body = r.json()
+    assert body["warn_gpu"] is True
+    assert body["job"]["kind"] == "quant"
+    assert any(j.kind == "quant" for j in api.REGISTRY.list())
+
+
+def test_quantize_start_failed(client, monkeypatch):
+    monkeypatch.setattr(api.runner, "probe_host", lambda cfg: _probe())
+    monkeypatch.setattr(api.runner, "start_task", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    r = client.post("/api/quantize", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4", "datasets": [],
+    })
+    assert r.status_code == 500
+    assert r.json()["detail"]["code"] == "start_failed"
+
+
+def test_eval_env_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api.runner, "probe_eval_env", lambda cfg: (False, "缺 vllm"))
+    r = client.post("/api/eval", json={"quant": str(tmp_path / "q"), "tasks": ["gsm8k"]})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "eval_env_missing"
+
+
+def test_eval_ok(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api.runner, "probe_eval_env", lambda cfg: (True, ""))
+    monkeypatch.setattr(api.runner, "start_script_task",
+                        lambda *a, **k: runner_mod.Task(task_id="t", remote_cmd="bash run.sh",
+                                                        log_path=str(tmp_path / "e.log"),
+                                                        pid="1", state="running"))
+    r = client.post("/api/eval", json={"quant": str(tmp_path / "q"), "tasks": ["gsm8k"]})
+    assert r.status_code == 202
+    assert r.json()["job"]["kind"] == "eval"
+
+
+def test_venv_install(client, monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(api.runner, "ensure_venv",
+                        lambda log, cfg: (seen.update(ran=True) or None))
+    import server.jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "_sleep", lambda s: time.sleep(0.01))
+    r = client.post("/api/venv")
+    assert r.status_code == 202
+    jid = r.json()["job_id"]
+    j = api.REGISTRY.get(jid)
+    assert j is not None
+    assert j.kind == "venv" and j.task is None
+    # poller 的 glob 只看 /tmp 前缀，直接指定 tmp 日志路径（tail_log 已被 fixture mock）；
+    # 无 marker + 包装线程退出（_done）⇒ poller 判 done
+    j.log_path = str(tmp_path / "venv.log")
+    for _ in range(100):   # 等包装线程跑完 + poller 判终态
+        if j.state in ("done", "failed"):
+            break
+        time.sleep(0.05)
+    assert seen.get("ran") is True
+    assert j.state == "done"
+
+
+def test_eval_env_install(client, monkeypatch):
+    monkeypatch.setattr(api.runner, "ensure_eval_env", lambda log, cfg: None)
+    r = client.post("/api/eval-env")
+    assert r.status_code == 202
+    assert r.json()["job"]["kind"] == "eval_env"
+
+
+def test_abort_job(client):
+    j = api.REGISTRY.create("venv", None, "x")
+    r = client.post(f"/api/jobs/{j.id}/abort")
+    assert r.status_code == 200
+    assert j.state == "aborted"
+    assert r.json()["state"] == "aborted"
+
+
+def test_abort_job_404(client):
+    r = client.post("/api/jobs/nope_123/abort")
+    assert r.status_code == 404
+    assert r.json()["detail"]["code"] == "no_job"
+
+
+def test_recipe_diff_no_job(client):
+    r = client.post("/api/recipe/diff", json={"job_id": "nope_123"})
+    assert r.status_code == 404
+
+
+def test_recipe_diff_bad_job(client):
+    j = api.REGISTRY.create("venv", None, "x")
+    r = client.post("/api/recipe/diff", json={"job_id": j.id})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "bad_job"
+
+
+def test_eval_baseline_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api.runner, "run_shell", lambda cmd, timeout=60: (1, "", ""))
+    r = client.post("/api/eval/baseline", json={"quant_path": str(tmp_path / "nope")})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "bad_quant_path"
+
+
+def test_eval_baseline_ok(client, monkeypatch, tmp_path):
+    cfg_json = json.dumps({"quantization_config": {"_name_or_path": "nvidia/Org-7B"}})
+    monkeypatch.setattr(api.runner, "run_shell",
+                        lambda cmd, timeout=60: (0, cfg_json, ""))
+    r = client.post("/api/eval/baseline", json={"quant_path": str(tmp_path / "q")})
+    assert r.status_code == 200
+    assert r.json()["baseline"] == "nvidia/Org-7B"
+
+
+def test_put_paths_and_net(client, monkeypatch, tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    # save_local 无 path 参数，直接写项目根 config.yaml —— 测试里重定向到 tmp
+    monkeypatch.setattr(api, "save_local",
+                        lambda local: cfg_file.write_text(
+                            f"repo: {local.repo}\nvenv: {local.venv}\n"
+                            f"task_dir: {local.task_dir}\nhf_cache: {local.hf_cache}\n"))
+    r1 = client.put("/api/paths", json={
+        "repo": str(tmp_path / "repo"), "venv": str(tmp_path / "v"),
+        "task_dir": str(tmp_path / "t"), "hf_cache": str(tmp_path / "h")})
+    assert r1.status_code == 200
+    assert api.CFG.local.repo == str(tmp_path / "repo")   # 内存态已更新
+    assert cfg_file.exists()   # save_local 被调到
+    # save_net 指向临时文件（避免污染项目根 net.json）
+    net_file = tmp_path / "net.json"
+    monkeypatch.setattr(api, "save_net",
+                        lambda net, path=net_file: path.write_text(json.dumps(
+                            {"mode": net.mode, "proxy": net.proxy})))
+    r2 = client.put("/api/net", json={"mode": "manual", "proxy": "http://x:1"})
+    assert r2.status_code == 200
+    assert net_file.exists()
+    assert json.loads(net_file.read_text())["mode"] == "manual"
+
+
+def test_net_test(client, monkeypatch):
+    monkeypatch.setattr(api.runner, "test_proxy", lambda cfg, url="": (True, "HTTP 200"))
+    r = client.post("/api/net/test")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "detail": "HTTP 200"}
