@@ -1,8 +1,8 @@
-/** 22 端点薄封装（形状与 server/api.py 一一对应，2026-10-14 核对）。 */
+/** 23 端点薄封装（形状与 server/api.py 一一对应，2026-10-14 核对）。 */
 import { request } from './client'
 import type {
   Artifact, BaselineResult, Bootstrap, Capabilities, EvalResults,
-  EvalStartParams, HostStatus, JobDetail, JobList, JobStart, LocalModel,
+  EstimateResult, EvalStartParams, HostStatus, JobDetail, JobList, JobStart, LocalModel,
   Net, NetTestResult, Paths, PreviewResult, QuantizeParams, QuantizeStart,
   RecipeDiffResult, VocabData,
 } from './types'
@@ -20,6 +20,11 @@ export const api = {
   net: () => request<{ net: Net }>('/net'),
   modelsLocal: () => request<{ models: LocalModel[]; error: string }>('/models/local'),
   artifacts: () => request<{ artifacts: Artifact[] }>('/artifacts'),
+  estimate: (p: { model: string; qformat?: string; kv_qformat?: string; ctx?: number; batch?: number }) =>
+    request<EstimateResult>(
+      `/estimate?model=${encodeURIComponent(p.model)}&qformat=${encodeURIComponent(p.qformat ?? '')}` +
+      `&kv_qformat=${encodeURIComponent(p.kv_qformat ?? '')}&ctx=${p.ctx ?? 2048}&batch=${p.batch ?? 1}`,
+    ),
 
   // 预览 / 校验
   preview: (p: QuantizeParams) => request<PreviewResult>('/preview', { method: 'POST', body: JSON.stringify(p) }),

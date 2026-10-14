@@ -207,6 +207,21 @@ export interface LocalModel {
   revision: string
 }
 
+/** GET /api/estimate（显存估算器，设计稿 §6） */
+export interface EstimateResult {
+  weight_bytes: number
+  /** cache / hf_api / unknown，可拼 "+kv_estimate" */
+  source: string
+  quant_bytes: number
+  kv_bytes: number
+  vram_total_mib: number
+  vram_used_mib: number
+  need_gib: number
+  fits: boolean
+  short_gib: number
+  note: string
+}
+
 /** GET /api/artifacts（C1 完整版：模型名/qformat 从 job.json.cmd 或 run.log 首行提取） */
 export interface Artifact {
   dir: string

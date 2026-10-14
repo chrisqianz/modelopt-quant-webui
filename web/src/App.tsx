@@ -9,6 +9,7 @@ import Sidebar, { VIEWS, type ViewKey } from './components/Sidebar'
 import TopBar from './components/TopBar'
 import { ToastProvider } from './components/ToastProvider'
 import TokenModal from './components/TokenModal'
+import VramPanel from './components/VramPanel'
 import JobsPanel from './components/JobsPanel'
 import QuantizeView from './views/QuantizeView'
 import EvalView from './views/EvalView'
@@ -20,6 +21,8 @@ export default function App() {
   const [view, setView] = useState<ViewKey>('quantize')
   const { data, error, reload } = useBootstrap()
   const [tokenOpen, setTokenOpen] = useState(false)
+  const [estimateOpen, setEstimateOpen] = useState(false)
+  const [estSeed, setEstSeed] = useState<{ model?: string; qformat?: string }>({})
 
   // token 弹层：401 时出现；输入后重放首屏
   useEffect(() => {
@@ -40,7 +43,7 @@ export default function App() {
     <div className="flex h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
       <Sidebar view={view} onNavigate={setView} probe={probe} />
       <div className="flex-1 flex flex-col min-w-0">
-        <TopBar title={title} probe={probe} caps={caps} />
+        <TopBar title={title} probe={probe} caps={caps} onOpenEstimate={() => setEstimateOpen(true)} />
         <main className="flex-1 overflow-y-auto p-6">
           <ToastProvider>
             {error && !data ? (
@@ -59,7 +62,10 @@ export default function App() {
               </div>
             ) : view === 'quantize' ? (
               <div className="space-y-6">
-                <QuantizeView data={data} />
+                <QuantizeView
+                  data={data}
+                  onModelChange={(model, qformat) => setEstSeed({ model, qformat })}
+                />
                 <JobsPanel />
               </div>
             ) : view === 'eval' ? (
@@ -74,6 +80,12 @@ export default function App() {
           </ToastProvider>
         </main>
       </div>
+      <VramPanel
+        open={estimateOpen}
+        onClose={() => setEstimateOpen(false)}
+        model={estSeed.model}
+        qformat={estSeed.qformat}
+      />
       <TokenModal
         open={tokenOpen}
         onDone={(ok) => {

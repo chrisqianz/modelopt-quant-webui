@@ -26,6 +26,7 @@ from webui.config import (DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR,
                           save_local, save_net)
 
 from server.capabilities import probe_capabilities, validate_cmd_flags
+from server.estimate import estimate as estimate_vram
 from server.jobs import Job, JobRegistry
 from server.schemas import (BaselineRequest, EvalStart, NetRequest,
                             PathsRequest, PreviewRequest, RecipeDiffRequest,
@@ -232,6 +233,23 @@ def get_paths() -> dict:
 @router.get("/net")
 def get_net() -> dict:
     return {"net": _net()}
+
+
+@router.get("/estimate")
+def estimate_api(
+    model: str = "",
+    qformat: str = "",
+    kv_qformat: str = "",
+    ctx: int = 2048,
+    batch: int = 1,
+) -> dict:
+    """显存估算（设计稿 §6）：权重量（缓存 du / HF API）+ 量化折算 + KV（config.json / 经验式）。
+
+    model 空 → 400 bad_params；其余参数用默认值，估算结果带 source 标注。
+    """
+    if not model.strip():
+        raise HTTPException(400, detail={"code": "bad_params", "message": "model 不能为空"})
+    return estimate_vram(model.strip(), qformat.strip(), kv_qformat.strip(), ctx, batch, CFG)
 
 
 @router.get("/models/local")

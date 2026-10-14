@@ -68,7 +68,10 @@ function buildInitialForm(data: Bootstrap | null): FormState {
   void defSize
 }
 
-export default function QuantizeView({ data }: { data: Bootstrap | null }) {
+export default function QuantizeView({ data, onModelChange }: {
+  data: Bootstrap | null
+  onModelChange?: (model: string, qformat: string) => void
+}) {
   const [form, setForm] = useState<FormState>(() => buildInitialForm(data))
   const [models, setModels] = useState<LocalModel[]>([])
   const [showAllModels, setShowAllModels] = useState(false)
@@ -90,6 +93,11 @@ export default function QuantizeView({ data }: { data: Bootstrap | null }) {
       } catch { /* C2 不可用不阻塞 */ }
     })()
   }, [])
+
+  // 模型/量化格式变化时上报 App，供「显存估算」面板带入初值
+  useEffect(() => {
+    if (onModelChange) onModelChange(form.model, form.qformat)
+  }, [form.model, form.qformat, onModelChange])
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }))
