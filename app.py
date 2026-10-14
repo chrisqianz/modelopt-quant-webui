@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
-import shlex
 import time
 
 import gradio as gr
