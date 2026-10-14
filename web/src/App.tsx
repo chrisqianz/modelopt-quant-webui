@@ -12,6 +12,7 @@ import TokenModal from './components/TokenModal'
 import PlaceholderView from './components/PlaceholderView'
 import JobsPanel from './components/JobsPanel'
 import QuantizeView from './views/QuantizeView'
+import EvalView from './views/EvalView'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('quantize')
@@ -60,7 +61,7 @@ export default function App() {
                 <JobsPanel />
               </div>
             ) : view === 'eval' ? (
-              <PlaceholderView name="性能与精度评测" note="Task 4：lm-eval 参数 + baseline 建议 + 结果表/图" />
+              <EvalView />
             ) : view === 'recipe' ? (
               <PlaceholderView name="配方对照" note="Task 5：选 job → 与官方配方 diff" />
             ) : view === 'artifacts' ? (
