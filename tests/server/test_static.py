@@ -104,6 +104,9 @@ def test_spa_unknown_api_path_returns_404_json(tmp_path, monkeypatch):
     r = c.get("/api/not-a-real-endpoint")
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "not_found"
+    # message 回显完整路径且无重复 /api 前缀（af79d35 的行为保护）
+    assert "/api/not-a-real-endpoint" in r.json()["error"]["message"]
+    assert "/api/api/" not in r.json()["error"]["message"]
 
 
 # ---------------------------------------------------------------- token 中间件
