@@ -39,14 +39,18 @@ router = APIRouter(prefix="/api")
 app = FastAPI(title="ModelOpt Quant WebUI")
 app.include_router(router)
 
-# token 中间件：CFG.server_token 非空时所有 /api/* 要求 X-Api-Token
-# （/api/health 纳管，不豁免；token 默认空 ⇒ 本机无感）。静态文件不校验。
+# token 中间件：CFG.server_token 非空时所有 /api/* 要求 token。
+# header X-Api-Token 优先；缺失时回落 query ?token=（EventSource 不能带自定义
+# header，SSE 连接用它）。/api/health 纳管不豁免；token 默认空 ⇒ 本机无感。
+# 注意：query 里的 token 会进访问日志，文档已注明。
 @app.middleware("http")
 async def _token_mw(request, call_next):
-    if (CFG.server_token and request.url.path.startswith("/api")
-            and request.headers.get("X-Api-Token") != CFG.server_token):
-        return JSONResponse(status_code=401, content={"error": {
-            "code": "bad_token", "message": "X-Api-Token 不符", "detail": ""}})
+    if CFG.server_token and request.url.path.startswith("/api"):
+        provided = request.headers.get("X-Api-Token") \
+            or request.query_params.get("token")
+        if provided != CFG.server_token:
+            return JSONResponse(status_code=401, content={"error": {
+                "code": "bad_token", "message": "X-Api-Token / ?token= 不符", "detail": ""}})
     return await call_next(request)
 
 mount_static(app)

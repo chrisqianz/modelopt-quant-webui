@@ -44,10 +44,15 @@ def client(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- no_dist 分支
 
-def test_no_dist(client):
-    """web/dist 不存在（本机就是）：GET / 返 no_dist JSON，API 照常可用。"""
-    assert not static_mod.DIST.exists(), "前提：本机 web/dist 不存在"
-    r = client.get("/")
+def test_no_dist(client, tmp_path, monkeypatch):
+    """web/dist 不存在：GET / 返 no_dist JSON，API 照常可用。
+    路由表在 import 时固化，必须新 app + 假 DIST 重挂才能测 no_dist 分支。"""
+    monkeypatch.setattr(static_mod, "DIST", tmp_path / "no-such-dist")
+    app = FastAPI(title="no-dist-test")
+    app.include_router(api.router)
+    static_mod.mount_static(app)
+    c = TestClient(app)
+    r = c.get("/")
     assert r.status_code == 200
     assert r.json()["error"]["code"] == "no_dist"
 
@@ -126,6 +131,23 @@ def test_token_wrong_value(tmp_path, monkeypatch):
     c = TestClient(api.app)
     r = c.get("/api/health", headers={"X-Api-Token": "wrong"})
     assert r.status_code == 401
+
+
+def test_token_query_param_ok(tmp_path, monkeypatch):
+    """SSE（EventSource）带不了自定义 header ⇒ ?token= 回落必须生效。"""
+    monkeypatch.setattr(api, "CFG", _make_cfg(tmp_path, token=_FAKE_HEADER_VALUE))
+    c = TestClient(api.app)
+    r = c.get('/api/health?token=' + _FAKE_HEADER_VALUE)
+    assert r.status_code == 200
+
+
+def test_token_query_param_wrong(tmp_path, monkeypatch):
+    """query 里的 token 错了同样 401（回落不是绕过）。"""
+    monkeypatch.setattr(api, "CFG", _make_cfg(tmp_path, token=_FAKE_HEADER_VALUE))
+    c = TestClient(api.app)
+    r = c.get("/api/health?token=***")
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "bad_token"
 
 
 def test_token_empty_no_check(client):

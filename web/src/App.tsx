@@ -10,6 +10,7 @@ import TopBar from './components/TopBar'
 import { ToastProvider } from './components/ToastProvider'
 import TokenModal from './components/TokenModal'
 import PlaceholderView from './components/PlaceholderView'
+import JobsPanel from './components/JobsPanel'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('quantize')
@@ -53,7 +54,7 @@ export default function App() {
                 </button>
               </div>
             ) : view === 'quantize' ? (
-              <PlaceholderView name="模型量化" note="Task 3：20 字段表单 + 命令预览 + 启动/中止" />
+              <JobsPanel />
             ) : view === 'eval' ? (
               <PlaceholderView name="性能与精度评测" note="Task 4：lm-eval 参数 + baseline 建议 + 结果表/图" />
             ) : view === 'recipe' ? (
