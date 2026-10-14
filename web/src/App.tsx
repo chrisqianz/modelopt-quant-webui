@@ -9,10 +9,10 @@ import Sidebar, { VIEWS, type ViewKey } from './components/Sidebar'
 import TopBar from './components/TopBar'
 import { ToastProvider } from './components/ToastProvider'
 import TokenModal from './components/TokenModal'
-import PlaceholderView from './components/PlaceholderView'
 import JobsPanel from './components/JobsPanel'
 import QuantizeView from './views/QuantizeView'
 import EvalView from './views/EvalView'
+import SettingsView from './views/SettingsView'
 import RecipeView from './views/RecipeView'
 import ArtifactsView from './views/ArtifactsView'
 
@@ -69,7 +69,7 @@ export default function App() {
             ) : view === 'artifacts' ? (
               <ArtifactsView />
             ) : (
-              <PlaceholderView name="系统设置与日志" note="Task 6：路径 / venv / 代理 / 探活明细" />
+              <SettingsView data={data} onSaved={() => void reload()} />
             )}
           </ToastProvider>
         </main>
