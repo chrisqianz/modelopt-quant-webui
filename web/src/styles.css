@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* 全局等宽字体回退（日志/命令用） */
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}

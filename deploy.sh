@@ -5,6 +5,7 @@
 #   .venv/   —— 跑 WebUI 自己的 venv（目标机上单独建）
 #   .venvs/  —— 量化用的 ModelOpt venv（D9：装在项目内）。**这行必须留着**，
 #               否则 --delete 会把目标机上装好的几 GB venv 直接删掉
+#   web/dist —— 前端构建产物，随 rsync 上机（dist 在 .gitignore，由 mac 侧 build 产生）
 #   net.json / config.yaml —— 代理与路径是每台机器自己的事实
 set -euo pipefail
 DEST="${1:-chrisqian@192.168.124.39:~/modelopt-quant-webui/}"
@@ -13,7 +14,7 @@ cd "$(dirname "$0")"
 rsync -avz --delete \
     --exclude='.git/' --exclude='.venv/' --exclude='.venvs/' \
     --exclude='__pycache__/' --exclude='web/node_modules/' \
-    --exclude='web/dist/' --exclude='.lens/' --exclude='.superpowers/' \
+    --exclude='.lens/' --exclude='.superpowers/' \
     --exclude='hosts.json' --exclude='server.json' --exclude='net.json' \
     --exclude='config.yaml' --exclude='*.log' \
     ./ "$DEST"
