@@ -1,15 +1,23 @@
 """词表：校准数据集 / 官方组合 / qformat / KV qformat。
 
-静态快照做兜底（离线可用、标注 N 项）；运行时可从远程仓库动态刷新，
-远程 ModelOpt 升级后 UI 自动出现新选项，无需改本文件。
+静态快照做兜底（离线可用、标注 N 项）；运行时从本机仓库目录动态扫描，
+ModelOpt 升级后 UI 自动出现新选项，无需改本文件。
 """
 
 from __future__ import annotations
 
 import re
+import shlex
+from pathlib import Path
+from typing import Any
 
-from .config import HostConfig
-from .runner import run_remote
+from .config import resolve_relative
+from .runner import run_shell
+
+
+def _repo_base(repo: str | Path) -> Path:
+    """统一把仓库路径展开（~ / 相对）成绝对路径，再交给 shell 命令。"""
+    return resolve_relative(repo)
 
 # ---------------------------------------------------------------- 数据集快照
 
@@ -72,7 +80,9 @@ def dataset_label(key: str) -> str:
 # ---------------------------------------------------------------- qformat 快照
 
 # 快照来自 modelopt_recipes/configs/ptq/presets/model/*.yaml（--qformat 词表）。
-QFORMAT_GROUPS: list[dict[str, object]] = [
+QGroup = dict[str, Any]        # {"name": str, "items": list[str]}
+
+QFORMAT_GROUPS: list[QGroup] = [
     {"name": "NVFP4 默认（W4A4）", "items": ["nvfp4", "nvfp4_fp8_mha", "nvfp4_four_over_six"]},
     {"name": "NVFP4 权重范围（官方推荐档）",
      "items": ["nvfp4_mlp_only", "nvfp4_experts_only", "nvfp4_omlp_only", "nvfp4_mlp_weight_only"]},
@@ -104,29 +114,32 @@ def kv_choices(kv: list[str] | None = None) -> list[tuple[str, str]]:
     """kv 下拉 choices：(展示名, 实际值) 元组，与 qf_dd 形态一致。
     保持纯字符串 choices 会在刷新前后形态不一，容易让前端把 (name, value)
     对整体发回（"value not in choices" 报错）。"""
-    return [((f"none（不量化 KV）" if k == "none" else k), k) for k in (kv or KV_QFORMATS)]
+    return [(("none（不量化 KV）" if k == "none" else k), k) for k in (kv or KV_QFORMATS)]
 
 
-# ---------------------------------------------------------------- 远程动态刷新
+# ---------------------------------------------------------------- 仓库动态扫描
 
-def fetch_remote_qformats(host: HostConfig) -> dict[str, object]:
-    """从远程仓库预设目录拉取 qformat / kv 词表。
+def scan_qformats(repo: str | Path) -> dict[str, object]:
+    """扫描仓库预设目录里的 qformat / kv 词表。
 
     Returns:
         {"model": [names...], "kv": [names...], "source": "remote|snapshot", "error": ""}
+        source 仍是 "remote"/"snapshot" 两个旧取值，UI 靠它判断要不要提示。
     """
     sub = {"model": "modelopt_recipes/configs/ptq/presets/model",
            "kv": "modelopt_recipes/configs/ptq/presets/kv"}
     out: dict[str, object] = {"source": "remote", "error": ""}
     try:
         for kind, d in sub.items():
-            r, o, e = run_remote(
-                host,
-                f"ls {d} 2>/dev/null | grep -E '\\.(yaml|yml)$' | sed 's/\\..*//' | sort",
+            # 必须是绝对路径：run_shell 不 cd 进仓库，给相对路径会在 $HOME 里执行
+            # （这就是旧版「刷新词表」从来没生效过的原因）
+            abs_d = shlex.quote(str(_repo_base(repo) / d))
+            r, o, e = run_shell(
+                f"ls {abs_d} 2>/dev/null | grep -E '\\.(yaml|yml)$' | sed 's/\\..*//' | sort",
                 timeout=20,
             )
             if r != 0 or not o.strip():
-                raise RuntimeError(f"远程目录不可读: {d} ({e or o})")
+                raise RuntimeError(f"仓库预设目录不可读: {d} ({e or o})")
             out[kind] = o.split()
         return out
     except Exception as ex:  # noqa: BLE001 - 快照兜底
@@ -134,21 +147,17 @@ def fetch_remote_qformats(host: HostConfig) -> dict[str, object]:
                 "source": "snapshot", "error": str(ex)}
 
 
-def fetch_remote_datasets(host: HostConfig) -> dict[str, object]:
-    """从远程仓库解析数据集注册表与组合（纯文本解析，不 import modelopt）。"""
-    r, src, e = run_remote(
-        host,
-        f"cat {host.remote_repo}/modelopt/torch/utils/dataset_utils.py 2>/dev/null",
-        timeout=20,
-    )
-    out: dict[str, object] = {"source": "remote", "error": ""}
+def scan_datasets(repo: str | Path) -> dict[str, object]:
+    """从仓库的 dataset_utils.py 解析数据集注册表与组合（纯文本解析，不 import modelopt）。"""
+    src_path = shlex.quote(str(_repo_base(repo) / "modelopt/torch/utils/dataset_utils.py"))
+    r, src, e = run_shell(f"cat {src_path} 2>/dev/null", timeout=20)
     if r != 0 or "SUPPORTED_DATASET_CONFIG" not in src:
         return {"datasets": builtin_dataset_keys(), "combos": dict(COMBOS),
                 "source": "snapshot", "error": e or "解析失败"}
     i = src.find("SUPPORTED_DATASET_CONFIG")
     j = src.find("}", i)
     block = src[i:j if j > 0 else i + 8000]
-    keys = [k for k in re.findall(r'^\s{4}"([^"]+)"\s*:', block, re.M)]
+    keys = re.findall(r'^\s{4}"([^"]+)"\s*:', block, re.M)
     i = src.find("DATASET_COMBOS")
     j = src.find("}", src.find("]", i))
     combos_block = src[i:j if j > 0 else i + 2000]
@@ -157,10 +166,10 @@ def fetch_remote_datasets(host: HostConfig) -> dict[str, object]:
     if not keys:
         return {"datasets": builtin_dataset_keys(), "combos": dict(COMBOS),
                 "source": "snapshot", "error": "解析失败"}
-    return {"datasets": keys, "combos": combos, "source": "remote"}
+    return {"datasets": keys, "combos": combos, "source": "remote", "error": ""}
 
 
-def render_qformat_dropdown(options: list[str], groups: list[dict[str, object]] | None = None) -> list[tuple[str, str]]:
+def render_qformat_dropdown(options: list[str], groups: list[QGroup] | None = None) -> list[tuple[str, str]]:
     """把 qformat 列表转成 Gradio choices [(展示名, 实际值), ...]，带分组注释。"""
     choices: list[tuple[str, str]] = []
     if groups is None:

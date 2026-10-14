@@ -1,8 +1,8 @@
 """结果校验：量化完成后核对导出 checkpoint 的实际量化范围。
 
 数据来源两条，都不占 GPU：
-1. 远程导出目录的 config.json（SSH 只读 cat + json 解析）
-2. 官方模型卡的 quantization_config（走本机代理访问 HF API，用于对照）
+1. 本机导出目录的 config.json（cat + json 解析）
+2. 官方模型卡的 quantization_config（走代理访问 HF API，用于对照）
 
 输出统一的"量化范围摘要"：groups（位数 × target 数 × 代表 target）+ ignore 列表，
 并与官方对照给出 一致/差异 提示。
@@ -13,22 +13,23 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
-from .runner import q_remote, run_remote
+from .runner import run_shell
 
 _HF_PROXY_ENV_KEYS = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
 
 
 @dataclass
 class QuantSummary:
-    source: str = ""  # e.g. "远程导出目录" / "nvidia/Qwen3.8-27B-NVFP4"
+    source: str = ""  # e.g. "导出目录" / "nvidia/Qwen3.8-27B-NVFP4"
     quant_method: str = ""
     groups: list[dict[str, Any]] = field(default_factory=list)  # {bits, count, samples}
     ignore: list[str] = field(default_factory=list)
-    files: str = ""  # 导出目录文件清单（仅远程摘要）
+    files: str = ""  # 导出目录文件清单（仅本机导出摘要）
     error: str = ""
 
 
@@ -49,10 +50,10 @@ def summarize(qc: dict[str, Any], source: str = "") -> QuantSummary:
     return s
 
 
-# ---------------------------------------------------------------- 远程导出目录
+# ---------------------------------------------------------------- 本机导出目录
 
-def fetch_remote_export(host, log_tail: str, export_dir_hint: str = "") -> QuantSummary:
-    """从任务日志定位导出目录，拉取 config.json 并摘要。"""
+def scan_export_dir(log_tail: str, export_dir_hint: str = "") -> QuantSummary:
+    """从任务日志定位导出目录，读本机 config.json 并摘要。"""
     m = re.search(r"Quantized model exported to:\s*(\S+)", log_tail)
     target = (m.group(1) if m else "").rstrip(".")
     if not target:
@@ -60,16 +61,17 @@ def fetch_remote_export(host, log_tail: str, export_dir_hint: str = "") -> Quant
     if not target:
         return QuantSummary(error="日志中未找到 'Quantized model exported to:'，无法定位导出目录")
 
-    r, out, err = run_remote(host, f"cat {q_remote(target, host)}/config.json 2>/dev/null", timeout=20)
+    q = shlex.quote(target)
+    r, out, err = run_shell(f"cat {q}/config.json 2>/dev/null", timeout=20)
     if r != 0 or not out:
         return QuantSummary(error=f"读取 {target}/config.json 失败（{err or '文件不存在'}）")
     try:
         cfg = json.loads(out)
     except json.JSONDecodeError as ex:
         return QuantSummary(error=f"config.json 解析失败: {ex}")
-    s = summarize(cfg.get("quantization_config", {}), source=f"远程导出 {target}")
-    # 附带文件清单，验证导出完整性
-    r2, files, _ = run_remote(host, f"ls -lh {q_remote(target, host)} 2>/dev/null | awk '{{print $5, $9}}' | head -30", timeout=20)
+    s = summarize(cfg.get("quantization_config", {}), source=f"本机导出 {target}")
+    # 附带文件清单，验证导出完整性（保持 ls -lh 原文口径，UI 表格直接显示）
+    r2, files, _ = run_shell(f"ls -lh {q} 2>/dev/null | awk '{{print $5, $9}}' | head -30", timeout=20)
     if r2 == 0 and files:
         s.files = files
     return s
@@ -91,10 +93,13 @@ def fetch_hf_quant_config(model_id: str, proxy: str = "") -> dict[str, Any]:
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=40, env=env)
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"拉取 {model_id} 超时（40s）")
+        raise RuntimeError(f"拉取 {model_id} 超时（40s）") from None
     if proc.returncode != 0 or not proc.stdout.strip():
         raise RuntimeError(f"拉取 {model_id} 失败: HTTP {proc.returncode} / {proc.stderr.strip()[:120]}")
-    data = json.loads(proc.stdout)
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError as ex:      # HF 不可达时代理可能回一段 HTML，别把 traceback 抛给 UI
+        raise RuntimeError(f"{model_id} 返回的不是 JSON（代理或网络异常）: {ex}") from ex
     if "config" not in data:
         raise RuntimeError(f"{model_id} 的 config 里没有 quantization_config（可能不是量化模型卡）")
     return data["config"]
