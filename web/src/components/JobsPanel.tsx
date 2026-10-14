@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/endpoints'
-import type { JobSummary } from '../api/types'
+import type { JobDetail, JobSummary } from '../api/types'
 import { useJobStream } from '../hooks/useJobStream'
 import ProgressCard from './ProgressCard'
 import LogPanel from './LogPanel'
@@ -29,9 +29,10 @@ export default function JobsPanel() {
   const [active, setActive] = useState<JobSummary[]>([])
   const [history, setHistory] = useState<JobSummary[]>([])
   const [selected, setSelected] = useState<JobSummary | null>(null)
+  const [detail, setDetail] = useState<JobDetail | null>(null)
   const [err, setErr] = useState('')
   const toast = useToast()
-  const stream = useJobStream(selected?.id ?? null)
+  const stream = useJobStream(selected?.id ?? null, selected?.state ?? null)
 
   const reload = useCallback(async () => {
     try {
@@ -51,6 +52,21 @@ export default function JobsPanel() {
     const t = setInterval(() => void reload(), 5000)
     return () => clearInterval(t)
   }, [active.length, selected, reload])
+
+  // 选中 job 是终态时拉快照（终态 job 的 SSE 已短路：state 事件只在 poller
+  // 存活时广播，终态后新订阅者永远收不到 ⇒ 流永久挂起，日志/进度只走快照）
+  useEffect(() => {
+    if (!selected) { setDetail(null); return }
+    if (!['done', 'failed', 'aborted'].includes(selected.state)) { setDetail(null); return }
+    let cancelled = false
+    void (async () => {
+      try {
+        const d = await api.jobDetail(selected.id)
+        if (!cancelled) setDetail(d)
+      } catch { /* 快照拉失败不阻塞展示 */ }
+    })()
+    return () => { cancelled = true }
+  }, [selected])
 
   const onAbort = async (id: string) => {
     try {
@@ -111,14 +127,19 @@ export default function JobsPanel() {
               </button>
             )}
           </div>
-          <ProgressCard progress={stream.progress} state={stream.state ?? selected.state} />
-          <LogPanel text={stream.log} />
+          <ProgressCard
+            progress={stream.progress ?? detail?.progress ?? null}
+            state={stream.state ?? detail?.state ?? selected.state}
+          />
+          <LogPanel text={stream.log || detail?.log_tail || ''} />
           <div className="text-[11px] text-slate-600">
-            {stream.finished
-              ? `流已结束（state=${stream.state ?? selected.state}）`
-              : stream.connected
-                ? 'SSE 已连接，实时接收中…'
-                : 'SSE 连接中 / 已断线（自动重连）…'}
+            {['done', 'failed', 'aborted'].includes(selected.state)
+              ? `终态 job（state=${selected.state}），日志/进度来自快照`
+              : stream.finished
+                ? `流已结束（state=${stream.state ?? selected.state}）`
+                : stream.connected
+                  ? 'SSE 已连接，实时接收中…'
+                  : 'SSE 连接中 / 已断线（自动重连）…'}
           </div>
         </div>
       )}

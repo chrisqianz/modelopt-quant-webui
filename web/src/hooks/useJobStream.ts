@@ -27,7 +27,7 @@ export interface JobStreamState {
   finished: boolean
 }
 
-export function useJobStream(jobId: string | null): JobStreamState {
+export function useJobStream(jobId: string | null, initialState: string | null = null): JobStreamState {
   const [log, setLog] = useState('')
   const [progress, setProgress] = useState<ProgressReport | null>(null)
   const [state, setState] = useState<string | null>(null)
@@ -45,8 +45,16 @@ export function useJobStream(jobId: string | null): JobStreamState {
     // 每次 jobId 变化重置
     setLog('')
     setProgress(null)
-    setState(null)
+    setState(initialState)
+    stateRef.current = initialState
     setFinished(false)
+
+    // 终态 job 不打开 ES：state 事件只在 poller 存活时广播，终态后新订阅者
+    // 永远收不到 state ⇒ 流永久挂起。终态 job 的日志/进度走 jobDetail 快照。
+    if (initialState && TERMINAL.has(initialState)) {
+      setFinished(true)
+      return
+    }
 
     const qs = getToken() ? '?tok' + 'en=' + getToken() : ''
     const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events${qs}`)
@@ -101,7 +109,7 @@ export function useJobStream(jobId: string | null): JobStreamState {
       es.close()
       esRef.current = null
     }
-  }, [jobId])
+  }, [jobId, initialState])
 
   return { log, progress, state, connected, finished }
 }
