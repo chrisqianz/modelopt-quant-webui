@@ -28,7 +28,7 @@ def mount_static(app) -> None:
         if path.startswith("api/"):
             return JSONResponse(
                 status_code=404,
-                content={"error": {"code": "not_found", "message": f"没有这个接口 /api/{path}", "detail": ""}})
+                content={"error": {"code": "not_found", "message": f"没有这个接口 /api/{path[4:]}", "detail": ""}})
         f = (DIST / path) if path else (DIST / "index.html")
         if path and f.is_file():
             return FileResponse(f)
