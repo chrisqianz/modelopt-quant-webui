@@ -46,9 +46,16 @@ def quantize_args(c: dict) -> list:
     return [row[k] for k in app.INPUT_ORDER if k in row]
 
 
-def assemble_quantize(a: list) -> str:
-    """位置参数 → 要执行的命令串（UI「启动量化」走过的同一条链路）。"""
-    return cmds.build_cmd(cmds.build_params(a, app.CFG), app.CFG)
+def assemble_quantize(a: list, extra_args: str = "") -> str:
+    """位置参数 → 要执行的命令串（UI「启动量化」走过的同一条链路）。
+
+    extra_args 是附加参数逃生口：legacy 位置参数链里没有它，真实入口走 API
+    （QuantizeParams.model_dump() 会带上 extra_args），所以这里在 build_params
+    之后注入 —— 与 server 端 build_cmd 读到的 dict 形状一致。"""
+    p = cmds.build_params(a, app.CFG)
+    if extra_args:
+        p["extra_args"] = extra_args
+    return cmds.build_cmd(p, app.CFG)
 
 
 def assemble_eval(quant: str, baseline: str, tasks: list[str],

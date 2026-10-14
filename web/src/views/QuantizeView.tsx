@@ -94,6 +94,7 @@ export default function QuantizeView({ data }: { data: Bootstrap | null }) {
     setForm((f) => ({ ...f, [k]: v }))
 
   const vocab = data?.vocab
+  const unmappedFlags = data?.capabilities?.unmapped ?? [] // 逃生口：本版本有、无控件的 flag
   const defaultSize = String(
     typeof data?.defaults?.calib_size === 'number' ? data.defaults.calib_size : 1024,
   )
@@ -364,6 +365,33 @@ export default function QuantizeView({ data }: { data: Bootstrap | null }) {
                 <Toggle label="skip_generate" checked={form.skip_generate} onChange={(v) => set('skip_generate', v)} />
               </div>
               <Field label="extra_args（逃生口：原样拼到命令尾；禁止 ; 与 &&）" full>
+                {unmappedFlags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    <span className="text-[11px] text-slate-500 self-center">本版本未映射的参数（点击加入附加参数）：</span>
+                    {unmappedFlags.map((f) => {
+                      const added = form.extra_args.includes(f)
+                      return (
+                        <button
+                          key={f}
+                          type="button"
+                          disabled={added}
+                          title={added ? '已在附加参数里' : `点击填入 ${f}`}
+                          onClick={() => {
+                            const cur = form.extra_args.trim()
+                            set('extra_args', cur ? `${cur} ${f}` : f)
+                          }}
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-mono border transition-colors ${
+                            added
+                              ? 'border-slate-800 bg-slate-900 text-slate-600 cursor-default'
+                              : 'border-cyan-800/60 bg-slate-900 text-cyan-300 hover:bg-slate-800 hover:border-cyan-600'
+                          }`}
+                        >
+                          {f}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
                 <input value={form.extra_args} onChange={(e) => set('extra_args', e.target.value)}
                   className={inputCls + ' font-mono'} placeholder="留空" />
               </Field>

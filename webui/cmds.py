@@ -195,7 +195,30 @@ def build_cmd(p: dict, cfg: AppConfig) -> str:
     if p.get("skip_generate"):
         parts.append("--skip_generate")
 
+    # 附加参数逃生口（设计稿 §7 层 3）：原样拼到命令尾部，让上游新 flag
+    # 不用等 WebUI 发版就能用。禁命令操作符，防注入。
+    extra = (p.get("extra_args") or "").strip()
+    if extra:
+        _validate_extra_args(extra)
+        parts.append(extra)
+
     return " ".join(parts)
+
+
+_EXTRA_ARG_FORBIDDEN = set(";&|<>\n\t$`")
+
+
+def _validate_extra_args(extra: str) -> None:
+    """校验附加参数：禁命令操作符（; & | < > 换行/Tab $ 反引号）。
+    shlex 解析失败也拒（引号不平衡等）。不校验 token 形状 —— flag 值里
+    带 / : . 都合法，过度校验反伤可用性。"""
+    bad = sorted(set(extra) & _EXTRA_ARG_FORBIDDEN)
+    if bad:
+        raise ValueError(f"附加参数含禁用字符: {''.join(bad)}")
+    try:
+        shlex.split(extra)
+    except ValueError as e:
+        raise ValueError(f"附加参数无法解析: {e}") from e
 
 
 # ---------------------------------------------------------------- 评测脚本
