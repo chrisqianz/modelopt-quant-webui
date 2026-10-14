@@ -25,8 +25,8 @@ from webui.cmds import (
     build_eval_script,
     build_params,
     check_local_model,
-    fmt_val,
     is_local_model,
+    prettify_cmd,
     result_tables,
     task_slug,
 )
@@ -493,7 +493,7 @@ def _build_app() -> gr.Blocks:
         def refresh_preview(*a):
             try:
                 cmd = build_cmd(build_params(list(a), CFG), CFG)
-                return _prettify_cmd(cmd)
+                return prettify_cmd(cmd)
             except Exception as ex:
                 return f"（拼参出错: {ex}）"
 
@@ -715,21 +715,6 @@ def _build_app() -> gr.Blocks:
 
 
     return app
-
-def _prettify_cmd(cmd: str) -> str:
-    """单行命令 → 反斜杠多行（仅展示）。"""
-    head, _, tail = cmd.partition(" && ")
-    if not tail:
-        return cmd
-    args = tail.split(" ")
-    if len(args) <= 2:
-        return cmd
-    first, rest = args[0], args[1:]
-    lines = [head + " && " + first + " \\"]
-    for i, arg in enumerate(rest):
-        lines.append("    " + arg + (" \\" if i < len(rest) - 1 else ""))
-    return "\n".join(lines)
-
 
 def main() -> None:
     _build_app().launch(server_name=CFG.server_host, server_port=CFG.server_port,

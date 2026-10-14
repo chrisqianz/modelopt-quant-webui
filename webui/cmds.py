@@ -35,6 +35,21 @@ EVAL_TASKS = [
 ]
 
 
+def prettify_cmd(cmd: str) -> str:
+    """单行命令 → 反斜杠多行（仅展示）。"""
+    head, _, tail = cmd.partition(" && ")
+    if not tail:
+        return cmd
+    args = tail.split(" ")
+    if len(args) <= 2:
+        return cmd
+    first, rest = args[0], args[1:]
+    lines = [head + " && " + first + " \\"]
+    for i, arg in enumerate(rest):
+        lines.append("    " + arg + (" \\" if i < len(rest) - 1 else ""))
+    return "\n".join(lines)
+
+
 def fmt_val(x) -> str:
     if isinstance(x, bool):
         return str(x)
