@@ -3,9 +3,15 @@
 在浏览器里驱动 [Model-Optimizer](https://github.com/NVIDIA/TensorRT-Model-Optimizer)
 跑 PTQ 量化与「量化 vs 基线」评测，全程看真实日志、真实进度。
 
-WebUI **跑在有 GPU 的机器上**（Gradio，端口 7861），浏览器从局域网打开。
-没有「远程执行」这一说：量化命令、venv 创建、评测环境、词表扫描，全部发生在
-WebUI 所在的这台机器上。
+WebUI **跑在有 GPU 的机器上**，浏览器从局域网打开。没有「远程执行」这一说：
+量化命令、venv 创建、评测环境、词表扫描，全部发生在 WebUI 所在的这台机器上。
+
+当前有**两个入口**：
+
+- **新 UI（React，端口 7862）**：`serve.py`，FastAPI 后端 + `web/dist` 静态前端，
+  五个功能区（模型量化 / 性能与精度评测 / 配方对比 / 产物库 / 路径与环境）。
+- **旧 UI（Gradio legacy，端口 7861）**：`app.py`，功能等价，保留作对照。
+  单入口（新 UI 直接挂 7861、退役 legacy）在 Plan 4 做。
 
 ## 快速开始
 
@@ -23,11 +29,20 @@ WebUI 所在的这台机器上。
 ```bash
 ssh <gpu机>
 cd modelopt-quant-webui
-# UI 用一个轻量 venv（gradio）
+# 服务端用一个轻量 venv（fastapi / gradio）
 uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
-.venv/bin/python app.py
+
+# 新 UI（7862）：先有 web/dist（npm run build → deploy.sh 已带），再起 serve
+setsid nohup .venv/bin/python serve.py >/tmp/serve7862.log 2>&1 &
+# 浏览器打开 http://<gpu机ip>:7862
+
+# 旧 UI（7861，对照用）
+setsid nohup .venv/bin/python app.py >/tmp/moweb.log 2>&1 &
 # 浏览器打开 http://<gpu机ip>:7861
 ```
+
+> GPU 机没装 `python3-venv`/`ensurepip`，一律用 `uv` 建 venv、`uv pip` 装包。
+> `serve.py` 的静态目录在 import 时固化：换 `web/dist` 后必须重启 serve 才生效。
 
 ### 3. 建量化 venv（一次性，5–15 分钟）
 
@@ -72,6 +87,26 @@ UI「HuggingFace 网络」面板可切换并即时测连通性。
 - **显存保护**：探测到 GPU 被占（显存占用 > 24G）时启动前明确提示，
   不抢占正在用的 GPU。
 
+## 前端（web/）
+
+React 19 + Vite + Tailwind v4 + recharts，构建产物在 `web/dist/`，
+由 `serve.py` 的 SPA catch-all 托管（未匹配路由回 `index.html`，`/api/*`
+绝不回退）。
+
+```bash
+cd web
+npm run dev        # 开发：vite dev server，/api 代理到 http://127.0.0.1:7862
+npx tsc --noEmit -p tsconfig.app.json   # 类型检查（根 tsconfig 是 solution 型，勿用）
+npm run build      # 构建 dist
+```
+
+部署：`npm run build` 后 `./deploy.sh`（dist 随 rsync 上机），再**重启 serve**。
+
+接口层：`src/api/`（types 与 `server/schemas.py` 逐字段对齐；401 触发 token
+弹层）。若 `serve.py` 开了 `server.token`（config.yaml `server:` 段），所有
+`/api/*` 要求 `X-Api-Token` header；SSE 不能带 header，连接走 `?token=` 回落，
+token 会进访问日志。默认空 token ⇒ 本机无感。
+
 ## 测试
 
 `tests/golden/` 是量化/评测命令串的 golden 快照（路径钉死成
@@ -87,7 +122,14 @@ UI「HuggingFace 网络」面板可切换并即时测连通性。
 ## 目录
 
 ```
-app.py            Gradio UI 层（参数 → 命令串 → 任务 → 日志/结果）
+serve.py          FastAPI 入口（7862）：/api/* + SSE + web/dist 静态托管
+server/schemas.py 请求/响应模型（pydantic，与前端 src/api/types.ts 对齐）
+server/api.py     22 端点 + token 中间件（header / ?token= 回落）
+server/jobs.py    job 注册表：生命周期 / 日志广播 / SSE 订阅 / 落盘重载
+server/capabilities.py  ModelOpt 版本 + hf_ptq.py flag 静态抽取
+server/static.py  web/dist 托管（缺失时明确报错，不白屏）
+web/              React 前端（src/api 接口层 / src/views 五区 / src/components）
+app.py            Gradio legacy UI 层（7861，对照保留，Plan 4 退役）
 webui/config.py   配置（server / local / network / defaults）
 webui/runner.py   本机执行：探测 / venv / 代理 / 任务生命周期
 webui/vocab.py    词表：数据集 / qformat / KV（真扫 + 快照兜底）

@@ -162,3 +162,30 @@
 3. 后端唯一改动 = token query 回落（Task 2），其余 22 端点只读 ✓
 4. 估算器/vLLM 模板/单入口/删 legacy 全部在「不在本计划」✓
 5. SSE 重连语义与 `server/jobs.py` 的 id=日志偏移、终态 break 一致（Task 2 按此实现）✓
+
+## GPU 机验证记录（2026-10-14，chrisqian-ubuntu01 / 192.168.124.39）
+
+全项直验（TestClient + 真 uvicorn + urllib/http.client；mac 无 agent-browser，
+浏览器逐项未做，如实记录）：
+
+- [x] 全量回归：`pytest -q` **91 passed**（计划写 92，实测 91，以实测为准）；
+      `import app; app._build_app()` BUILD OK（legacy 未动）
+- [x] build+部署：`npm run build` → `index-DCgKctu6.js`（656KB chunk 警告可接受）
+      → `./deploy.sh`（dist 随 rsync 上机，`.venvs/` 已排除）
+- [x] 7862 五区真值：root 200 且 asset = 新 hash；bootstrap probe
+      gpu=RTX 5090 D / venv_ok / repo_ok / hf_direct=false / disk=437G /
+      hf_cache=5.7G；capabilities = `0.48.0rc0-35-g254195350`，
+      flags_all=34 / mapped=18 / unmapped=16 / missing=[] / error=''
+      （与 Plan 2 复验一致）；vocab = qformats 40 / kv 8 / datasets 18 /
+      source=remote / error=''
+- [x] 五区依赖端点：preview（missing_flags=[]、caps_error=''）、
+      eval/results（rows=[]、note「无结果文件」）、artifacts（artifacts=[]）、
+      paths（四值）、net（direct/''）全 200
+- [x] 7861 legacy 同机对照 200（双开状态记录：7861 legacy + 7862 新 UI 同机并行）
+- [x] token 实测：开 `server.token` → 重启 serve → 无 token `/api/health` 401
+      bad_token（health 纳管）；header 姿势 200；错 token 401；query `?token=`
+      姿势 200；错 query 401；SSE events 走 query = 200 text/event-stream；
+      static root 不受管仍 200。关 token → 重启 → 全端点恢复无 token 200
+- [ ] 真跑量化 / 评测：**未做**——GPU 显存被 vllm serve（Qwen3.8-27B-NVFP4）
+      占用，ADR 023 不抢占；待显存空闲补真跑
+- [ ] 浏览器逐项确认：**未做**（mac 无 agent-browser，以上为后端直验）
