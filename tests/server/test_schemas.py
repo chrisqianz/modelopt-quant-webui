@@ -3,6 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from server.schemas import (
+    EvalStart,
     ErrorResponse,
     NetRequest,
     PathsRequest,
@@ -18,7 +19,13 @@ def test_quantize_params_dumps_all_20_keys() -> None:
         dataset_sizes={"cnn_dailymail": 1024},
     )
     d = q.to_build_params_dict()
-    assert len(d) == 20  # build_params 的 19 个 key + extra_args
+    # 核心契约：字段名与 build_params 的 19 个 key 一一对应，再 + extra_args
+    assert set(d) == {
+        "model", "trust_remote_code", "qformat", "recipe", "kv_cache_qformat",
+        "datasets", "dataset_sizes", "custom_datasets", "calib_seq", "calib_with_images",
+        "export_path", "batch_size", "device", "attn_implementation", "use_fsdp2",
+        "cpu_offload", "low_memory_mode", "gpu_max_mem_percentage", "skip_generate",
+    } | {"extra_args"}
     assert d["model"] == "x"
     assert d["qformat"] == "nvfp4"
     assert d["datasets"] == ["cnn_dailymail"]
@@ -29,6 +36,13 @@ def test_quantize_params_dumps_all_20_keys() -> None:
 def test_error_response() -> None:
     e = ErrorResponse(error={"code": "x", "message": "y", "detail": "z"})
     assert e.error == {"code": "x", "message": "y", "detail": "z"}
+
+
+def test_eval_start_port_range() -> None:
+    assert EvalStart(quant="q").port == 8000
+    for bad in (0, 70000, -1):
+        with pytest.raises(ValidationError):
+            EvalStart(quant="q", port=bad)
 
 
 def test_paths_request_and_net_request() -> None:

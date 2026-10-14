@@ -1,5 +1,5 @@
 """pydantic v2 请求/响应模型层（与 webui.cmds.build_params 的 key 对齐）。"""
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "QuantizeParams",
@@ -59,7 +59,7 @@ class EvalStart(BaseModel):
     quant: str
     baseline: str = ""
     tp: int = 1
-    port: int = 8000
+    port: int = Field(default=8000, ge=1, le=65535)
     batch: str = "auto"
     tasks: list[str] = []
 
