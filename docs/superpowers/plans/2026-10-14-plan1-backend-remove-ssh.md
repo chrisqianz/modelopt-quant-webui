@@ -454,23 +454,32 @@ Expected: `grep` 只剩注释里的历史说明（应该 0 命中最好；命中
 
 **Files:** `webui/vocab.py`、`webui/validate.py`
 
-- [ ] `vocab.fetch_remote_qformats(host)`（L112-134）→ `scan_qformats(repo: Path) -> list[str]`：同一套解析（`grep -oE "choices=\[[^]]*\]"` + `nvfp4|fp8|int8` 过滤）改成 `Path.read_text()` + `re.findall`，源文件 `repo/modelopt/torch/quantization/config.py`；读不到时回落到现有内置快照（函数里那份 fallback 列表保留）
-- [ ] `vocab.fetch_remote_datasets(host)`（L137-160）→ `scan_datasets(repo: Path)`，同上
-- [ ] `vocab.render_qformat_dropdown`（L163）调用点同步；`all_qformats`（L99）、`kv_choices`（L103）、`builtin_dataset_keys`（L59）、`dataset_label`（L63）不动
-- [ ] `validate.fetch_remote_export`（L54-75）→ `scan_export_dir(path: str) -> dict`：`os.walk(resolve_relative(path))`，产出结构与原来一致（文件清单 + `hf_quant_config.json` 解析），日志目录侧仍从产物目录读
-- [ ] 冒烟：
+> **写这一节时计划里对这两个函数的描述是错的**（说成 grep `config.py` 的 `choices=[...]`）。下面按读过的真实代码重写。数据源、命令文本、返回结构全部保持不变 —— 本 Task 只做两件事：**去掉 host 参数走本机 shell** + **补上缺失的仓库绝对路径**。
+
+- [ ] **先修一个既有 BUG（BUG 3，只有本机模式下才会暴露）**：`vocab.py:112 fetch_remote_qformats` 发的命令是 `ls modelopt_recipes/configs/ptq/presets/model ...`（相对路径），而原 `run_remote` 从不 `cd` 进仓库（只有 `build_remote_cmd` 在自己的命令串里 `cd {repo} &&`）⇒ 这条 `ls` 一直在 `$HOME` 里执行，必然非 0 / 空 ⇒ `raise RuntimeError` ⇒ **永远走 `source: "snapshot"` 兜底**，「刷新词表」从来没生效过，下拉里一直是硬编码快照。`fetch_remote_datasets` 用的是 `cat {host.remote_repo}/...` 绝对路径，所以只有它是好的。修法：路径前缀补上仓库根（绝对路径 + `shlex.quote`）。
+- [ ] `vocab.fetch_remote_qformats(host)`（L112-134）→ `scan_qformats(repo) -> dict[str, object]`：命令文本照搬，只把 `run_remote(host, cmd, timeout=20)` 换成 `run_shell(cmd, timeout=20)`，`d` 换成 `shlex.quote(str(Path(repo) / d))`。**返回结构一字不改**：`{"model": [...], "kv": [...], "source": "remote|snapshot", "error": ""}`，兜底仍是 `{"model": all_qformats(), "kv": list(KV_QFORMATS), "source": "snapshot", "error": str(ex)}`
+- [ ] `vocab.fetch_remote_datasets(host)`（L137-160）→ `scan_datasets(repo) -> dict[str, object]`：`cat` 的路径由 `{host.remote_repo}/modelopt/torch/utils/dataset_utils.py` 改成 `shlex.quote(str(Path(repo) / "modelopt/torch/utils/dataset_utils.py"))`，`run_remote` → `run_shell`；`SUPPORTED_DATASET_CONFIG` / `DATASET_COMBOS` 两段正则**逐行照搬不动**；返回结构不变（`datasets` / `combos` / `source` / `error`）
+- [ ] `vocab.render_qformat_dropdown`（L163）、`all_qformats`（L99）、`kv_choices`（L103）、`builtin_dataset_keys`（L59）、`dataset_label`（L63）不动
+- [ ] `validate.fetch_remote_export(host, log_tail, export_dir_hint)`（L54-79）→ `scan_export_dir(log_tail, export_dir_hint="") -> QuantSummary`：定位导出目录的正则 `Quantized model exported to:\s*(\S+)` + `.rstrip(".")` + 回落 `export_dir_hint` 全部照搬；两处 `q_remote(target, host)` 换成 `shlex.quote(target)`、`run_remote` 换 `run_shell`。**不要改成 `Path.iterdir()` 自造文件清单** —— `s.files` 现在是 `ls -lh … | awk '{print $5,$9}' | head -30` 的原文，UI 表格直接显示它，换成 Python 格式化会让尺寸显示口径变样（`4.0G` vs 字节数），本 Task 不带这个改动
+- [ ] `app.py` 调用点同步（`do_refresh` L941 / `initial_probe` L973 / `do_validate` L1086），参数传 `CFG.local.repo_path`；`source == "snapshot"` 时的提示文案不动
+- [ ] 冒烟（mac 上没有 `~/Model-Optimizer`，所以这里应该看到兜底，这是对的）：
 
 ```bash
 .venv/bin/python -m py_compile webui/vocab.py webui/validate.py
-.venv/bin/python -c "
+.venv/bin/python - <<'PY'
 from webui.config import load_config
-from webui import vocab
+from webui import vocab, validate
 c = load_config()
-qs = vocab.scan_qformats(c.local.repo_path)
-print(len(qs), qs[:5])"
+q = vocab.scan_qformats(c.local.repo_path)
+d = vocab.scan_datasets(c.local.repo_path)
+print("qformats:", q["source"], len(q["model"]), q["model"][:3], q["error"][:60])
+print("datasets:", d["source"], len(d["datasets"]), d["datasets"][:3], str(d["error"])[:60])
+s = validate.scan_export_dir("Quantized model exported to: /nonexistent/x")
+print("export:", s.error or s.files)
+PY
 ```
 
-Expected: 在 mac 上若没 `~/Model-Optimizer` → 返回内置快照（len > 0）；在 GPU 机上跑应返回真实扫到的列表（含 `nvfp4`）
+Expected: mac 上 `qformats: snapshot`（仓库不在）、`datasets: snapshot`、`export:` 一句读不到 config.json 的错误。GPU 机上（Task 7）应看到 `qformats: remote` —— 这是 BUG 3 修好的证据
 - [ ] Commit: `git commit -am "refactor(vocab,validate): 远程 grep/cat 换成本机文件系统扫描"`
 
 ---
