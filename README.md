@@ -6,12 +6,12 @@
 WebUI **跑在有 GPU 的机器上**，浏览器从局域网打开。没有「远程执行」这一说：
 量化命令、venv 创建、评测环境、词表扫描，全部发生在 WebUI 所在的这台机器上。
 
-当前有**两个入口**：
+**单入口（端口 7861）**：`app.py`，一个进程同时挂 FastAPI 后端（`/api/*` +
+SSE）、`web/dist` 静态前端（五个功能区：模型量化 / 性能与精度评测 / 配方对比 /
+产物库 / 路径与环境）。
 
-- **新 UI（React，端口 7862）**：`serve.py`，FastAPI 后端 + `web/dist` 静态前端，
-  五个功能区（模型量化 / 性能与精度评测 / 配方对比 / 产物库 / 路径与环境）。
-- **旧 UI（Gradio legacy，端口 7861）**：`app.py`，功能等价，保留作对照。
-  单入口（新 UI 直接挂 7861、退役 legacy）在 Plan 4 做。
+> 历史：早期是「React 7862（serve.py）+ Gradio legacy 7861」双开对照，已合并
+> 为单入口 7861；legacy Gradio 已退役（`legacy_app_gradio.py`，本版本删除）。
 
 ## 快速开始
 
@@ -29,20 +29,16 @@ WebUI **跑在有 GPU 的机器上**，浏览器从局域网打开。没有「�
 ```bash
 ssh <gpu机>
 cd modelopt-quant-webui
-# 服务端用一个轻量 venv（fastapi / gradio）
+# 服务端用一个轻量 venv（fastapi / uvicorn / pydantic）
 uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
 
-# 新 UI（7862）：先有 web/dist（npm run build → deploy.sh 已带），再起 serve
-setsid nohup .venv/bin/python serve.py >/tmp/serve7862.log 2>&1 &
-# 浏览器打开 http://<gpu机ip>:7862
-
-# 旧 UI（7861，对照用）
+# 先有 web/dist（npm run build → deploy.sh 已带），再起单入口
 setsid nohup .venv/bin/python app.py >/tmp/moweb.log 2>&1 &
 # 浏览器打开 http://<gpu机ip>:7861
 ```
 
 > GPU 机没装 `python3-venv`/`ensurepip`，一律用 `uv` 建 venv、`uv pip` 装包。
-> `serve.py` 的静态目录在 import 时固化：换 `web/dist` 后必须重启 serve 才生效。
+> 静态目录在 import 时固化：换 `web/dist` 后必须重启进程才生效。
 
 ### 3. 建量化 venv（一次性，5–15 分钟）
 
@@ -90,20 +86,20 @@ UI「HuggingFace 网络」面板可切换并即时测连通性。
 ## 前端（web/）
 
 React 19 + Vite + Tailwind v4 + recharts，构建产物在 `web/dist/`，
-由 `serve.py` 的 SPA catch-all 托管（未匹配路由回 `index.html`，`/api/*`
-绝不回退）。
+由 `app.py`（`server/static.py` 的 SPA catch-all）托管（未匹配路由回
+`index.html`，`/api/*` 绝不回退）。
 
 ```bash
 cd web
-npm run dev        # 开发：vite dev server，/api 代理到 http://127.0.0.1:7862
+npm run dev        # 开发：vite dev server，/api 代理到 http://127.0.0.1:7861
 npx tsc --noEmit -p tsconfig.app.json   # 类型检查（根 tsconfig 是 solution 型，勿用）
 npm run build      # 构建 dist
 ```
 
-部署：`npm run build` 后 `./deploy.sh`（dist 随 rsync 上机），再**重启 serve**。
+部署：`npm run build` 后 `./deploy.sh`（dist 随 rsync 上机），再**重启 app.py**。
 
 接口层：`src/api/`（types 与 `server/schemas.py` 逐字段对齐；401 触发 token
-弹层）。若 `serve.py` 开了 `server.token`（config.yaml `server:` 段），所有
+弹层）。若开了 `server.token`（config.yaml `server:` 段），所有
 `/api/*` 要求 `X-Api-Token` header；SSE 不能带 header，连接走 `?token=` 回落，
 token 会进访问日志。默认空 token ⇒ 本机无感。
 
@@ -122,14 +118,14 @@ token 会进访问日志。默认空 token ⇒ 本机无感。
 ## 目录
 
 ```
-serve.py          FastAPI 入口（7862）：/api/* + SSE + web/dist 静态托管
+app.py            单入口（7861）：起 uvicorn 挂 server.api:app（/api/* + SSE + web/dist）
 server/schemas.py 请求/响应模型（pydantic，与前端 src/api/types.ts 对齐）
-server/api.py     22 端点 + token 中间件（header / ?token= 回落）
+server/api.py     23 端点 + token 中间件（header / ?token= 回落）
 server/jobs.py    job 注册表：生命周期 / 日志广播 / SSE 订阅 / 落盘重载
 server/capabilities.py  ModelOpt 版本 + hf_ptq.py flag 静态抽取
+server/estimate.py 显存估算（权重量 / 量化折算 / KV / 真实显存对比）
 server/static.py  web/dist 托管（缺失时明确报错，不白屏）
 web/              React 前端（src/api 接口层 / src/views 五区 / src/components）
-app.py            Gradio legacy UI 层（7861，对照保留，Plan 4 退役）
 webui/config.py   配置（server / local / network / defaults）
 webui/runner.py   本机执行：探测 / venv / 代理 / 任务生命周期
 webui/vocab.py    词表：数据集 / qformat / KV（真扫 + 快照兜底）

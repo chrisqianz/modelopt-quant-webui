@@ -1,7 +1,7 @@
 """把「当前代码怎么拼命令」包一层，重构时只改这里，fixture 不动。
 
-Task 5 拔掉 host 维度后，命令里的路径来自模块级 `app.CFG.local`，所以这里
-在 import 之后把 `app.CFG` 换成一份**写死绝对路径**的配置：golden 里出现的是
+单入口迁移后，命令里的路径来自 `webui.input_order` 里的**写死绝对路径**配置，
+不再依赖 `app.py`（gradio UI 层已改名/退役）。golden 里出现的是
 `/home/tester/...`，跟跑测试这台机器的真实路径无关。
 
 三处以磁盘上的真实代码为准：
@@ -9,7 +9,7 @@ Task 5 拔掉 host 维度后，命令里的路径来自模块级 `app.CFG.local`
 1. `webui.cmds.build_cmd(p, cfg)` 收的是 `build_params` 之后的**字典**（内部走
    `p.get("model")`），不是 UI 框架的位置参数列表。所以 assemble_quantize 走 UI
    的真实链路：位置参数 → `webui.cmds.build_params` → `webui.cmds.build_cmd`。
-2. `app.INPUT_ORDER` 里没有 host_name（host 维度已删），`build_params` 的
+2. `INPUT_ORDER` 里没有 host_name（host 维度已删），`build_params` 的
    `a[0]` 就是 `model`。
 3. 路径全部给绝对路径，避免 `resolve_relative` 把相对路径挂到项目根上 ——
    那样 golden 会烘进「这台机器的 checkout 在哪」。
@@ -20,30 +20,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import app  # noqa: E402  import 无副作用：main() 在 __main__ 守卫里
 from webui import cmds  # noqa: E402
-from webui.config import AppConfig, LocalConfig, NetConfig  # noqa: E402
+from webui.input_order import INPUT_ORDER, build_initial_config  # noqa: E402
 
 # 钉死执行侧路径：不读 config.yaml / net.json，不碰真实 HOME。
-# 与 Task 5 之前「本机模式 + 默认路径 + HOME=/home/tester」展开出来的结果一致，
+# 与「本机模式 + 默认路径 + HOME=/home/tester」展开出来的结果一致，
 # 所以 golden 不需要重生成 —— 命令串没变就是行为没变。
-app.CFG = AppConfig(
-    local=LocalConfig(
-        repo="/home/tester/Model-Optimizer",
-        venv="/home/tester/.venvs/modelopt",
-        task_dir="/home/tester/quant-webui-tasks",
-        hf_cache="/home/tester/.cache/huggingface",
-    ),
-    net=NetConfig(),
+CFG = build_initial_config(
+    repo="/home/tester/Model-Optimizer",
+    venv="/home/tester/.venvs/modelopt",
+    task_dir="/home/tester/quant-webui-tasks",
+    hf_cache="/home/tester/.cache/huggingface",
 )
 
 
 def quantize_args(c: dict) -> list:
-    """用例 dict → gradio 事件的位置参数列表（顺序照 app.INPUT_ORDER）。"""
+    """用例 dict → gradio 事件的位置参数列表（顺序照 INPUT_ORDER）。"""
     names = c["sizes_names"]
     table = [[c["sizes"][n]] for n in names]
     row = {**c, "sizes_table": table}
-    return [row[k] for k in app.INPUT_ORDER if k in row]
+    return [row[k] for k in INPUT_ORDER if k in row]
 
 
 def assemble_quantize(a: list, extra_args: str = "") -> str:
@@ -52,17 +48,17 @@ def assemble_quantize(a: list, extra_args: str = "") -> str:
     extra_args 是附加参数逃生口：legacy 位置参数链里没有它，真实入口走 API
     （QuantizeParams.model_dump() 会带上 extra_args），所以这里在 build_params
     之后注入 —— 与 server 端 build_cmd 读到的 dict 形状一致。"""
-    p = cmds.build_params(a, app.CFG)
+    p = cmds.build_params(a, CFG)
     if extra_args:
         p["extra_args"] = extra_args
-    return cmds.build_cmd(p, app.CFG)
+    return cmds.build_cmd(p, CFG)
 
 
 def assemble_eval(quant: str, baseline: str, tasks: list[str],
                   tp: int, port: int, batch: int | str) -> str:
     # build_eval_script 内部就是 str(batch or "auto")，先转字符串不改变行为
     return cmds.build_eval_script(quant, baseline, tasks, tp, port,
-                                  str(batch), app.CFG)
+                                  str(batch), CFG)
 
 
 def assemble_tables(results: list[dict]) -> list[list[str]]:
