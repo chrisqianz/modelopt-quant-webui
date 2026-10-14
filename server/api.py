@@ -29,6 +29,7 @@ from server.jobs import Job, JobRegistry
 from server.schemas import (BaselineRequest, EvalStart, NetRequest,
                             PathsRequest, PreviewRequest, RecipeDiffRequest,
                             QuantizeParams)
+from server.static import mount_static
 
 CFG = load_config()
 REGISTRY = JobRegistry(CFG)
@@ -37,6 +38,18 @@ REGISTRY.reload()   # 启动重挂：收编上次进程遗留的 job.json
 router = APIRouter(prefix="/api")
 app = FastAPI(title="ModelOpt Quant WebUI")
 app.include_router(router)
+
+# token 中间件：CFG.server_token 非空时所有 /api/* 要求 X-Api-Token
+# （/api/health 纳管，不豁免；token 默认空 ⇒ 本机无感）。静态文件不校验。
+@app.middleware("http")
+async def _token_mw(request, call_next):
+    if (CFG.server_token and request.url.path.startswith("/api")
+            and request.headers.get("X-Api-Token") != CFG.server_token):
+        return JSONResponse(status_code=401, content={"error": {
+            "code": "bad_token", "message": "X-Api-Token 不符", "detail": ""}})
+    return await call_next(request)
+
+mount_static(app)
 
 
 # ---------------------------------------------------------------- 辅助

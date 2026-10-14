@@ -335,3 +335,29 @@
 
 1. **subagent-driven**（推荐）：每个 Task 派一个 `acp_delegate` worker，按 Task 0→8 顺序，每完成一个 Task 跑该 Task 的验证步骤 + commit，下一个 Task 基于前一个的 commit。Task 7 的 GPU 机验证要 worker 能 ssh（key auth 已配好）。
 2. **inline**：主会话逐 Task 执行，每 Task 的验证步骤跑完再进下一个。适合想边看边调的情况。
+
+---
+
+## GPU 机验证记录（2026-10-14 19:07）
+
+机器：`chrisqian@192.168.124.39`（chrisqian-ubuntu01，RTX 5090 D 32GB）。部署：`./deploy.sh`（rsync，`--exclude='.venvs/'`）。GPU 机 UI 用 `.venv` 走 `~/.local/bin/uv`（`python3 -m venv` 不可用，无 ensurepip）：`uv venv .venv` + `uv pip install --python .venv/bin/python fastapi uvicorn "pydantic>=2" httpx`（代理 `http://192.168.124.24:7890` 三变量）。
+
+端点实测（7862 serve.py，legacy 7861 双开正常）：
+
+| 端点 | 结果 |
+|---|---|
+| `GET /api/bootstrap` | 200；`probe.gpu`=RTX 5090 D、`venv_ok`/`repo_ok`/`reachable` true、`hf_direct_ok` false、`disk_free` 437G、`hf_cache` 5.7G；keys=capabilities/defaults/jobs/net/paths/probe/vocab |
+| `POST /api/probe` | 200 |
+| `GET /api/capabilities` | 200；`version`=0.48.0rc0-35-g254195350、`commit`=254195350、`flags_all`=**34**、`mapped`=18、`unmapped`=**16**、`missing`=0、`error`="" |
+| `POST /api/preview` | 200；4/4 golden 用例去路径前缀后 flag 串**逐字节相等**（路径差异 = 本机 CFG，预期） |
+| `GET /`（no_dist） | 200 `{error:{code:no_dist}}`，API 照常 |
+| legacy `GET :7861/` | 200（双开对照未破坏） |
+
+**验证中发现并修复（2 个真 bug，单测全 mock 未暴露，靠实机抓出）：**
+
+1. **`~` 未展开**：`server/capabilities.py` 用裸 `Path(cfg.local.repo)`，git 走 `q_remote` 所以 version 正常，但 `extract_flags`/`exists()` 用 `~/Model-Optimizer` 字面路径 ⇒ `flags_all=0`、`error="hf_ptq.py 不存在: ~/..."`。修：`repo = cfg.local.repo_path`（`resolve_relative` 含 expanduser）。回归测试 `test_probe_capabilities_tilde_repo`。与 Plan 1 BUG 3（`scan_qformats` 同病）同类。
+2. **`custom_datasets` 条数 int 被拒**：schema `list[list[str]]` 拒绝 `[['mysite', 128]]`（gradio 表格/前端会发 int）⇒ preview 422。修：`list[list[str | int]]`（`cmds.py:156` 用 `str(row[0])` 取名称，int 安全）。回归测试 `test_quantize_params_custom_datasets_mixed_types`。
+
+**与计划正文的偏差（1 处，以实测为准）：** 本 Task 7 步骤写「`flags_all` 35 项 + `unmapped` 17 项」（沿用设计稿/ADR 024 的手工清单），实测静态抽取 = **34 / 16**（本地脚本独立对 GPU 机 hf_ptq.py 抽取双向 diff 为空，与 API 完全一致）⇒ 手工清单多算 1 个，真实以 34/16 为准。16 个 unmapped：--specdec_offline_dataset --inference_tensor_parallel --inference_pipeline_parallel --awq_block_size --sparsity_fmt --export_fmt --use_seq_device_map --verbose --auto_quantize_checkpoint --kv_auto_quantize_checkpoint --moe_calib_experts_ratio --vllm_fakequant_export --cast_mxfp4_to_nvfp4 --offload_folder --max_cpu_memory_gb --max_gpu_memory_gb。
+
+**未做（如实记录）：** mac 无 agent-browser（missing-binary），浏览器逐项确认改用 TestClient + curl 直验替代；token 中间件未上 GPU 机实测（config.yaml `server.token` 默认空，单测覆盖）。

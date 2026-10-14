@@ -12,7 +12,6 @@ from server.capabilities import (
 )
 from webui import runner
 from webui.config import AppConfig, LocalConfig
-
 FAKE_REPO_SRC = (
     'parser.add_argument("--qformat", type=str)\n'
     'parser.add_argument("--calib_seq", type=int)\n'
@@ -96,6 +95,19 @@ def test_probe_capabilities_error_on_exception(tmp_path, monkeypatch):
     out = probe_capabilities(_cfg(tmp_path))
     assert out["error"] != ""
     assert "git not found" in out["error"]
+
+
+def test_probe_capabilities_tilde_repo(tmp_path, monkeypatch):
+    """回归：repo 配成 ~/xxx 时必须 expanduser（裸 Path(repo) 不展开 ~，
+    extract_flags/exists 静默失效，GPU 机实测 flags_all=0 就是这个坑）。"""
+    _make_fake_repo(tmp_path)
+    # 假 HOME 指向 tmp，repo 配 ~/repo ⇒ expanduser 后落在 tmp/repo（软链回假仓库根）
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "repo").symlink_to(tmp_path)
+    monkeypatch.setattr(runner, "run_shell", _fake_run_shell)
+    out = probe_capabilities(AppConfig(local=LocalConfig(repo="~/repo")))
+    assert out["flags_all"] == ["--qformat", "--calib_seq", "--foo_new_flag", "--skip_generate"]
+    assert out["error"] == ""
 
 
 # ---------------------------------------------------------------- validate_cmd_flags

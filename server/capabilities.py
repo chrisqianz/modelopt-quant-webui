@@ -70,9 +70,9 @@ def probe_capabilities(cfg: AppConfig) -> dict:
         "missing": [],
         "error": "",
     }
-    repo = Path(cfg.local.repo)
-    # git -C 后的路径必须走 q_remote（shlex.quote + expanduser），与项目惯例一致，
-    # 避免 repo 配置含特殊字符时经 bash -c 注入
+    repo = cfg.local.repo_path   # 走 resolve_relative：expanduser + 相对路径解析
+    # （裸 Path(cfg.local.repo) 不展开 ~，extract_flags/exists 会静默失效；
+    #   git -C 再经 q_remote 转义，与项目惯例一致，避免 repo 含特殊字符时经 bash -c 注入）
     repo_q = runner.q_remote(str(repo))
     try:
         rc, out_v, _ = runner.run_shell(

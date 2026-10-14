@@ -34,6 +34,19 @@ def test_quantize_params_dumps_all_20_keys() -> None:
     assert d["extra_args"] == ""
 
 
+def test_quantize_params_custom_datasets_mixed_types() -> None:
+    """回归：gradio 表格的条数列给的是 int（如 [['mysite', 128]]），schema 不能拒绝。"""
+    q = QuantizeParams(
+        model="x", qformat="nvfp4", datasets=[],
+        custom_datasets=[["mysite", 128]],
+    )
+    assert q.custom_datasets == [["mysite", 128]]
+    # 名称列允许纯字符串行（单列表格折一维后的形状由前端统一）
+    q2 = QuantizeParams(model="x", qformat="nvfp4", datasets=[],
+                        custom_datasets=[["tiny"]])
+    assert q2.custom_datasets == [["tiny"]]
+
+
 def test_error_response() -> None:
     e = ErrorResponse(error={"code": "x", "message": "y", "detail": "z"})
     assert e.error == {"code": "x", "message": "y", "detail": "z"}

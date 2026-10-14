@@ -29,7 +29,8 @@ class QuantizeParams(BaseModel):
     kv_cache_qformat: str = "none"
     datasets: list[str]
     dataset_sizes: dict[str, int] = {}
-    custom_datasets: list[list[str]] = []
+    # 每行 [名称, 条数]；条数来自前端表格可能是 int（cmds.py:156 用 str(row[0]) 取名称，int 安全）
+    custom_datasets: list[list[str | int]] = []
     calib_seq: int = 512
     calib_with_images: bool = False
     export_path: str = ""
