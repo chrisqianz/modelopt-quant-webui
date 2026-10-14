@@ -11,6 +11,7 @@ import { ToastProvider } from './components/ToastProvider'
 import TokenModal from './components/TokenModal'
 import PlaceholderView from './components/PlaceholderView'
 import JobsPanel from './components/JobsPanel'
+import QuantizeView from './views/QuantizeView'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('quantize')
@@ -54,7 +55,10 @@ export default function App() {
                 </button>
               </div>
             ) : view === 'quantize' ? (
-              <JobsPanel />
+              <div className="space-y-6">
+                <QuantizeView data={data} />
+                <JobsPanel />
+              </div>
             ) : view === 'eval' ? (
               <PlaceholderView name="性能与精度评测" note="Task 4：lm-eval 参数 + baseline 建议 + 结果表/图" />
             ) : view === 'recipe' ? (
