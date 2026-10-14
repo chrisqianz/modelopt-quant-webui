@@ -13,6 +13,8 @@ import PlaceholderView from './components/PlaceholderView'
 import JobsPanel from './components/JobsPanel'
 import QuantizeView from './views/QuantizeView'
 import EvalView from './views/EvalView'
+import RecipeView from './views/RecipeView'
+import ArtifactsView from './views/ArtifactsView'
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('quantize')
@@ -63,9 +65,9 @@ export default function App() {
             ) : view === 'eval' ? (
               <EvalView />
             ) : view === 'recipe' ? (
-              <PlaceholderView name="配方对照" note="Task 5：选 job → 与官方配方 diff" />
+              <RecipeView data={data} />
             ) : view === 'artifacts' ? (
-              <PlaceholderView name="模型仓库与导出" note="Task 5：C1 产物卡片（最小版）" />
+              <ArtifactsView />
             ) : (
               <PlaceholderView name="系统设置与日志" note="Task 6：路径 / venv / 代理 / 探活明细" />
             )}

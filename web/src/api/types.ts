@@ -159,12 +159,30 @@ export interface JobStart {
   job: JobSummary
 }
 
-/** POST /api/recipe/diff */
+/** POST /api/recipe/diff（summary = asdict(QuantSummary)） */
+export interface RecipeGroup {
+  name: string
+  bits: string | number
+  count: number
+  samples: string[]
+  more: string
+}
+
 export interface RecipeDiffResult {
-  summary: Record<string, unknown>
-  groups: Record<string, unknown>[]
+  summary: {
+    source: string
+    quant_method: string
+    groups: RecipeGroup[]
+    ignore: string[]
+    files: string
+    error: string
+  }
+  /** 后端直接透传 QuantSummary.groups（与 summary.groups 同形） */
+  groups: RecipeGroup[]
+  /** 官方对照 diff 文本（official 为空时为空串） */
   diff: string
-  files: unknown[]
+  /** 导出目录文件清单（纯文本） */
+  files: string
 }
 
 /** POST /api/eval/baseline */
