@@ -2,21 +2,36 @@
  * 对配方区：选一个已完成的 quant job + 官方 summary 路径（可空）
  * → POST /api/recipe/diff → 本产物 summary 卡 + 量化组列表 + diff 文本 + 文件清单。
  */
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { GitCompare, Loader2 } from 'lucide-react'
 import { api } from '../api/endpoints'
-import type { Bootstrap, JobSummary, RecipeDiffResult } from '../api/types'
+import type { JobSummary, RecipeDiffResult } from '../api/types'
 
 const inputCls =
   'w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-[13px] text-slate-100 outline-none focus:border-violet-500/60 placeholder:text-slate-600'
 
-export default function RecipeView({ data }: { data: Bootstrap | null }) {
-  const jobs = data ? [...data.jobs] : []
+export default function RecipeView() {
+  // job 列表自取 + 5s 轮询：bootstrap 是页面挂载时的一次性快照，量化完成后
+  // 必须轮询才能看到新的 done/failed job（否则下拉只有页面打开前的旧 job）。
+  const [jobs, setJobs] = useState<JobSummary[]>([])
   const [jobId, setJobId] = useState('')
   const [official, setOfficial] = useState('')
   const [result, setResult] = useState<RecipeDiffResult | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const reloadJobs = useCallback(async () => {
+    try {
+      const r = await api.jobs()
+      setJobs([...r.active, ...r.history])
+    } catch { /* 拉取失败保留旧列表 */ }
+  }, [])
+
+  useEffect(() => { void reloadJobs() }, [reloadJobs])
+  useEffect(() => {
+    const t = setInterval(() => void reloadJobs(), 5000)
+    return () => clearInterval(t)
+  }, [reloadJobs])
 
   const doDiff = async () => {
     setBusy(true)

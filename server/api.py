@@ -18,20 +18,19 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from server.capabilities import probe_capabilities, validate_cmd_flags
+from server.estimate import estimate as estimate_vram
+from server.jobs import Job, JobRegistry
+from server.schemas import (BaselineRequest, EvalStart, NetRequest,
+                            PathsRequest, PreviewRequest, QuantizeParams,
+                            RecipeDiffRequest)
+from server.static import mount_static
 from webui import progress, runner, validate, vocab
 from webui.cmds import (build_cmd, build_eval_script, check_local_model,
                         is_local_model, prettify_cmd, result_tables, task_slug)
 from webui.config import (DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR,
                           DEFAULT_VENV, LocalConfig, NetConfig, load_config,
                           save_local, save_net)
-
-from server.capabilities import probe_capabilities, validate_cmd_flags
-from server.estimate import estimate as estimate_vram
-from server.jobs import Job, JobRegistry
-from server.schemas import (BaselineRequest, EvalStart, NetRequest,
-                            PathsRequest, PreviewRequest, RecipeDiffRequest,
-                            QuantizeParams)
-from server.static import mount_static
 
 CFG = load_config()
 REGISTRY = JobRegistry(CFG)
@@ -463,10 +462,17 @@ def recipe_diff(req: RecipeDiffRequest) -> dict:
         raise HTTPException(400, detail={"code": "bad_job",
                                          "message": "该 job 没有可对照的日志", "detail": ""})
     log_tail = runner.read_log(job.task, 5000)
-    hint = ""
+    base_dir = ""          # hf_ptq 运行目录（cmd 里 `cd <dir> &&`）——相对导出路径据此解析
+    exp_hint = "exported_model"   # hf_ptq --export_path 缺省值
     with contextlib.suppress(Exception):
-        hint = job.task.remote_cmd.split("--export_path")[-1].split()[0].strip("'\"")
-    mine = validate.scan_export_dir(log_tail, export_dir_hint=hint)
+        cmd = job.task.remote_cmd
+        cdm = re.search(r"(?:^|&&)\s*cd\s+(\S+)", cmd)
+        if cdm:
+            base_dir = cdm.group(1).strip("'\"")
+        em = re.search(r"--export_path\s+(\S+)", cmd)
+        if em:
+            exp_hint = em.group(1).strip("'\"")
+    mine = validate.scan_export_dir(log_tail, export_dir_hint=exp_hint, base_dir=base_dir)
     diff = ""
     if req.official.strip():
         try:

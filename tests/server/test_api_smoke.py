@@ -7,8 +7,8 @@
 import json
 import time
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 import server.api as api
 from server.jobs import JobRegistry
@@ -524,6 +524,53 @@ def test_recipe_diff_bad_job(client):
     r = client.post("/api/recipe/diff", json={"job_id": j.id})
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "bad_job"
+
+
+def test_recipe_diff_relative_export_resolves_to_cd_dir(client, monkeypatch, tmp_path):
+    """cmd 无 --export_path 时：日志里的相对导出路径（exported_model）必须拼到
+    cmd 里 `cd <repo>` 的目录下，而不是回退成第一个词（旧 bug：hint='cd' →
+    读 cd/config.json 必败）。"""
+    from webui import validate
+    task = runner_mod.Task(task_id="t", remote_cmd="cd /repo && /venv/bin/python hf_ptq.py --model x",
+                           log_path=str(tmp_path / "r.log"), pid="1", state="done")
+    j = api.REGISTRY.create("quant", task, task.remote_cmd)
+    monkeypatch.setattr(api.runner, "read_log", lambda t, n: "Quantized model exported to: exported_model. done")
+    cfg_json = json.dumps({"quantization_config": {
+        "quant_method": "modelopt", "quant_algo": "NVFP4"}})
+    seen = []
+
+    def fake_run_shell(cmd, timeout=60):
+        seen.append(cmd)
+        if cmd.startswith("cat "):
+            return (0, cfg_json, "")
+        return (0, "files", "")
+    monkeypatch.setattr(validate, "run_shell", fake_run_shell)
+
+    r = client.post("/api/recipe/diff", json={"job_id": j.id, "official": ""})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["summary"]["quant_method"] == "modelopt"
+    assert body["summary"]["source"] == "本机导出 /repo/exported_model"
+    assert any(cmd.startswith("cat /repo/exported_model/config.json") for cmd in seen)
+
+
+def test_recipe_diff_export_path_flag_wins(client, monkeypatch, tmp_path):
+    """cmd 有 --export_path 时，无日志 marker 也应回退到该绝对路径（不再读 cd/config.json）。"""
+    from webui import validate
+    task = runner_mod.Task(task_id="t",
+                           remote_cmd="cd /repo && py hf_ptq.py --export_path /out/q4",
+                           log_path=str(tmp_path / "r.log"), pid="1", state="done")
+    j = api.REGISTRY.create("quant", task, task.remote_cmd)
+    monkeypatch.setattr(api.runner, "read_log", lambda t, n: "no marker here")
+    cfg_json = json.dumps({"quantization_config": {"quant_method": "modelopt"}})
+    seen = []
+    monkeypatch.setattr(validate, "run_shell",
+                        lambda cmd, timeout=60: (seen.append(cmd) or (0, cfg_json, "")))
+
+    r = client.post("/api/recipe/diff", json={"job_id": j.id, "official": ""})
+    assert r.status_code == 200
+    assert r.json()["summary"]["source"] == "本机导出 /out/q4"
+    assert any(cmd.startswith("cat /out/q4/config.json") for cmd in seen)
 
 
 def test_eval_baseline_missing(client, monkeypatch, tmp_path):

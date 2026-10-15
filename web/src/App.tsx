@@ -71,7 +71,7 @@ export default function App() {
             ) : view === 'eval' ? (
               <EvalView />
             ) : view === 'recipe' ? (
-              <RecipeView data={data} />
+              <RecipeView />
             ) : view === 'artifacts' ? (
               <ArtifactsView data={data} />
             ) : (

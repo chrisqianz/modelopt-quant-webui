@@ -52,19 +52,29 @@ def summarize(qc: dict[str, Any], source: str = "") -> QuantSummary:
 
 # ---------------------------------------------------------------- 本机导出目录
 
-def scan_export_dir(log_tail: str, export_dir_hint: str = "") -> QuantSummary:
-    """从任务日志定位导出目录，读本机 config.json 并摘要。"""
+def scan_export_dir(log_tail: str, export_dir_hint: str = "", base_dir: str = "") -> QuantSummary:
+    """从任务日志定位导出目录，读本机 config.json 并摘要。
+
+    base_dir：hf_ptq 实际运行目录（cmd 里 `cd <dir>` 的目标）。日志里的导出路径
+    常为相对路径（如 `exported_model`），须拼到 base_dir 下才是真实位置。
+    """
     m = re.search(r"Quantized model exported to:\s*(\S+)", log_tail)
     target = (m.group(1) if m else "").rstrip(".")
     if not target:
         target = export_dir_hint
     if not target:
-        return QuantSummary(error="日志中未找到 'Quantized model exported to:'，无法定位导出目录")
+        return QuantSummary(error="日志中未找到 'Quantized model exported to:'，且未提供导出目录")
+
+    # 相对路径（非 / 开头、非 ~ 开头）拼到 base_dir 下
+    t = target[2:] if target.startswith("./") else target
+    if base_dir and not (os.path.isabs(t) or t.startswith("~")):
+        target = base_dir.rstrip("/") + "/" + t
 
     q = shlex.quote(target)
     r, out, err = run_shell(f"cat {q}/config.json 2>/dev/null", timeout=20)
     if r != 0 or not out:
-        return QuantSummary(error=f"读取 {target}/config.json 失败（{err or '文件不存在'}）")
+        return QuantSummary(error=f"读取 {target}/config.json 失败（{err or '文件不存在'}）。"
+                                  "若导出目录已被移动或重命名，请确认实际路径后再对照")
     try:
         cfg = json.loads(out)
     except json.JSONDecodeError as ex:

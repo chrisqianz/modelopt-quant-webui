@@ -15,6 +15,7 @@ rsync -avz --delete \
     --exclude='.git/' --exclude='.venv/' --exclude='.venvs/' \
     --exclude='__pycache__/' --exclude='web/node_modules/' \
     --exclude='.lens/' --exclude='.superpowers/' \
+    --exclude='llm_model_quantization_dashboard.tsx' \
     --exclude='hosts.json' --exclude='server.json' --exclude='net.json' \
     --exclude='config.yaml' --exclude='*.log' \
     ./ "$DEST"
