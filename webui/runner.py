@@ -400,6 +400,7 @@ class Task:
     pid: str = ""
     state: str = "starting"  # starting | running | done | failed | aborted
     started_at: float = field(default_factory=time.time)
+    death_grace: int = 0  # 进程已死但成功 marker 未落盘时的宽限轮数（>0 = 宽限中，不判 failed）
     done_marker: str = "Quantized model exported to"  # 日志里出现 = 成功结束
     pkill_pattern: str = ""  # 中止时顺带杀掉的子进程（如 vllm serve）
 
@@ -452,13 +453,44 @@ def start_script_task(cfg: AppConfig, task_dir_full: str, script: str,
                 log_path=log_path, pid=pid, state="running",
                 done_marker="EVAL_DONE", pkill_pattern=pkill_pattern)
 
+# 进程已死、成功 marker 未出现时，最多再宽限多少轮才判 failed（轮询 5s/轮）
+_DEATH_GRACE_ROUNDS = 6
+
+
 def poll_task(task: Task) -> None:
+    """探活并更新 task.state。
+
+    两个必须避开的误判（2026-10-15 远程误判 failed 事故）：
+    1. run_shell 返回 rc=-1 表示探测命令本身超时（系统繁忙），不是进程死了
+       —— 旧代码 `if r != 0` 把超时当已死，进程还在跑就提前判 failed。
+    2. 进程刚死时 stdout 块缓冲的最后一行可能还没落盘（或包装 shell 先死），
+       tail 里还没有成功 marker —— 立即判 failed 会把「正在收尾的成功任务」
+       误判成失败。给 _DEATH_GRACE_ROUNDS 轮宽限，marker 落盘即翻 done。
+    """
     r, out, _ = run_shell(f"kill -0 {shlex.quote(task.pid)} 2>/dev/null && echo alive", timeout=15)
-    if r != 0:
-        r2, tail, _ = run_shell(f"tail -c 4000 {q_remote(task.log_path)}", timeout=15)
-        task.state = "done" if task.done_marker in tail or not tail.strip() else "failed"
+    if r == -1:
+        return  # 探测超时：状态未知，保持原状，下轮再探
+    if r == 0:
+        task.state = "running"
+        task.death_grace = 0  # 还活着，宽限计数清零
         return
-    task.state = "running"
+    # 进程确实死了：读日志尾部找成功 marker
+    r2, tail, _ = run_shell(f"tail -c 4000 {q_remote(task.log_path)}", timeout=15)
+    if r2 == -1:
+        return  # 读日志超时：下轮再读（空串不能当「日志为空」）
+    if task.done_marker in tail:
+        task.state = "done"
+        return
+    if not tail.strip():
+        task.state = "done"  # 日志为空且进程已死：沿用旧行为（无输出 = 无实质失败信息）
+        return
+    # 死了但 marker 还没出现：进入/继续宽限
+    if task.death_grace <= 0:
+        task.death_grace = _DEATH_GRACE_ROUNDS
+        return
+    task.death_grace -= 1
+    if task.death_grace == 0:
+        task.state = "failed"
 
 def read_log(task: Task, tail_bytes: int = 20000) -> str:
     return tail_log(task.log_path, tail_bytes)

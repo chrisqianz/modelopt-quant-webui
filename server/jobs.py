@@ -21,6 +21,7 @@ import os
 import re
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -29,6 +30,10 @@ from webui import progress, runner
 
 
 _TERMINAL = ("done", "failed", "aborted")
+
+# poller 连续多少轮异常后放弃重试、判 job failed（单轮异常只记日志跳过，
+# 避免瞬时故障把正在收尾的任务误判成失败）
+_POLL_MAX_CONSECUTIVE_ERRORS = 5
 
 
 def _sleep(seconds: float) -> None:
@@ -214,7 +219,12 @@ class JobRegistry:
     def _poll(self, job) -> None:
         # 异常安全：poller 是后台线程，任何一轮抛异常（日志被删、
         # 假实现递归等）都不能让线程静默死掉——否则 job 永久卡 running，
-        # SSE 客户端永远等不到 state 事件。任何异常一律判 failed + 广播。
+        # SSE 客户端永远等不到 state 事件。
+        # 单轮异常只记录 + 跳过（日志可能正在写入、磁盘可能繁忙）；
+        # 连续 _POLL_MAX_CONSECUTIVE_ERRORS 轮异常才判 failed，且必留 traceback
+        # （2026-10-15 远程事故：旧策略「异常=立即 failed 且不留痕」导致成功
+        # 任务被静默误判，事后无法定位根因）。
+        consecutive_errors = 0
         while job.state not in _TERMINAL:
             terminal = False
             try:
@@ -256,8 +266,13 @@ class JobRegistry:
                     self._broadcast(job, "log", {"tail": raw[-30000:]})
                     self._broadcast(job, "progress", dataclasses.asdict(rep))
             except Exception:
-                terminal = True
-                job.state = "failed"
+                consecutive_errors += 1
+                traceback.print_exc()  # 写 app stderr 日志，不再静默
+                if consecutive_errors >= _POLL_MAX_CONSECUTIVE_ERRORS:
+                    terminal = True
+                    job.state = "failed"
+            else:
+                consecutive_errors = 0
             if terminal:
                 if job.kind in ("quant", "eval") and job.state not in _TERMINAL:
                     job.state = "done" if job.task.state == "done" else "failed"

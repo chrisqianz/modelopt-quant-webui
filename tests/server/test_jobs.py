@@ -338,8 +338,11 @@ class TestPollerSSE:
         assert job.state == "failed"
 
     def test_poller_exception_is_failed_not_hang(self, registry, cfg):
-        """异常安全回归：poller 线程里任何一轮抛异常，必须判 failed + 广播 state，
-        不能静默死掉让 job 永久卡 running（曾因此挂死测试/生产 SSE）。"""
+        """异常安全回归（持续异常）：单轮异常只记 traceback + 跳过；
+        连续 _POLL_MAX_CONSECUTIVE_ERRORS 轮异常才判 failed + 广播 state，
+        不能静默死掉让 job 永久卡 running（曾因此挂死测试/生产 SSE）。
+        （2026-10-15 事故：旧策略「异常=立即 failed 且不留痕」把正在收尾的
+        成功任务静默误判 failed，事后无法定位。）"""
         d = cfg.local.task_path / "quant_exc"
         d.mkdir(parents=True)
         task = runner.Task(task_id="quant_exc", remote_cmd="true",
@@ -364,3 +367,32 @@ class TestPollerSSE:
         assert events[-1]["type"] == "state"
         assert events[-1]["data"] == {"state": "failed"}
         assert job.state == "failed"
+
+    def test_poller_transient_exception_keeps_running(self, registry, cfg):
+        """单轮异常回归：第 1 轮抛异常、第 2 轮正常收尾 ⇒ job 是 done 而非 failed。
+        旧策略「异常=立即 failed」正是 2026-10-15 远程成功任务被误判的机制。"""
+        d = cfg.local.task_path / "quant_exc_transient"
+        d.mkdir(parents=True)
+        task = runner.Task(task_id="quant_exc_transient", remote_cmd="true",
+                           log_path=str(d / "run.log"), pid="1", state="running")
+        job = registry.create("quant", task, "cmd")
+        calls = {"n": 0}
+
+        def flaky_poll(t):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient boom")
+            t.state = "done"
+
+        with patch.object(jobs_mod.runner, "poll_task", flaky_poll), \
+             patch.object(jobs_mod.runner, "read_log",
+                          lambda t, tail_bytes=20000: "done line\n"), \
+             patch.object(jobs_mod, "_sleep", lambda s: time.sleep(0.05)):
+            t0 = time.time()
+            registry.start_poller(job)
+            while job.state not in ("done", "failed"):
+                if time.time() - t0 > 3:
+                    raise AssertionError("job 超时未终态")
+                time.sleep(0.05)
+        assert calls["n"] >= 2
+        assert job.state == "done"
