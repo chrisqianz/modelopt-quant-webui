@@ -73,6 +73,8 @@ UI「HuggingFace 网络」面板可切换并即时测连通性。
 
 ## 功能
 
+> 量化操作的逐步指南见 [docs/quantization-operations-guide.md](docs/quantization-operations-guide.md)。
+
 - **量化**：模型（HF ID 或本机路径）→ 配方 / qformat + KV qformat →
   校准数据集（内置勾选 + 自定义行，逐行独立 calib_size）→ 高级参数 →
   命令预览 → 启动 / 实时日志 → 结果校验（`hf_quant_config.json` 对配方 diff）。

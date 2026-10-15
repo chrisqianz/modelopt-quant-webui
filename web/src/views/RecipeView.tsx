@@ -32,7 +32,7 @@ export default function RecipeView({ data }: { data: Bootstrap | null }) {
   }
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="w-full space-y-4">
       <section className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
         <h3 className="text-[12px] font-semibold text-slate-400 tracking-wide uppercase">
           对照来源

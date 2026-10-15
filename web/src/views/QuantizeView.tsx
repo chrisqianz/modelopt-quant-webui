@@ -193,7 +193,7 @@ export default function QuantizeView({ data, onModelChange }: {
   const capErr = preview?.caps_error || ''
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="w-full space-y-4">
       {jobId && running ? (
         // 运行态：进度 + 日志 + 中止
         <div className="space-y-3">

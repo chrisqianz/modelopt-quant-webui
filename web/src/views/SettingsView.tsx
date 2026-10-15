@@ -135,7 +135,7 @@ export default function SettingsView({ data, onSaved }: { data: Bootstrap | null
     !!jobId && !stream.finished
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="w-full space-y-4">
       {/* ① 路径卡 */}
       <section className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
         <h3 className="flex items-center gap-2 text-[12px] font-semibold text-slate-400 tracking-wide uppercase">

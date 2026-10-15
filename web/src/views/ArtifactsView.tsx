@@ -150,7 +150,7 @@ export default function ArtifactsView({ data }: { data: Bootstrap | null }) {
   const taskDir = data?.paths?.task_dir ?? ''
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="w-full space-y-4">
       <section className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-[12px] font-semibold text-slate-400 tracking-wide uppercase">

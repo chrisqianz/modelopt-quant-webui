@@ -128,7 +128,7 @@ export default function EvalView() {
   const chartOk = chart.length >= 3
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="w-full space-y-4">
       {jobId && running ? (
         <div className="space-y-3">
           <ProgressCard progress={stream.progress} state={stream.state ?? jobState} />

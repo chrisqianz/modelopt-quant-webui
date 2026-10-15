@@ -31,5 +31,12 @@ def mount_static(app) -> None:
                 content={"error": {"code": "not_found", "message": f"没有这个接口 /api/{path[4:]}", "detail": ""}})
         f = (DIST / path) if path else (DIST / "index.html")
         if path and f.is_file():
+            if f.name == "index.html":
+                # 入口不长期缓存：浏览器默认启发式缓存 index.html 会卡在旧 bundle
+                # （曾导致重建 dist 后页面仍跑旧 JS，需 cache-bust query 才能刷新）
+                return FileResponse(f, headers={"Cache-Control": "no-cache"})
+            if f.parent.name == "assets" and f.suffix in {".js", ".css"}:
+                # 文件名带内容哈希，长期缓存安全
+                return FileResponse(f, headers={"Cache-Control": "public, max-age=31536000, immutable"})
             return FileResponse(f)
-        return FileResponse(DIST / "index.html")
+        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache"})
