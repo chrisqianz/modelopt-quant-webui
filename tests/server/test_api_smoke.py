@@ -514,6 +514,25 @@ def test_abort_job_404(client):
     assert r.json()["detail"]["code"] == "no_job"
 
 
+def test_recipe_diff_terminal_job_without_task(client, monkeypatch, tmp_path):
+    """服务重启后终态 job 的 task 被清空（job.json 持久化）：对照必须走
+    持久化字段 job.cmd / job.log_path，而不是 job.task（旧版直接 400）。"""
+    from webui import validate
+    j = api.REGISTRY.create("quant", None,
+                            "cd /repo && /venv/bin/python hf_ptq.py --model x",
+                            )
+    j.log_path = str(tmp_path / "r.log")
+    j.state = "done"
+    cfg_json = json.dumps({"quantization_config": {"quant_method": "modelopt"}})
+    monkeypatch.setattr(api.runner, "tail_log", lambda path, n: "exported to: exported_model")
+    monkeypatch.setattr(validate, "run_shell",
+                        lambda cmd, timeout=60: (0, cfg_json, ""))
+
+    r = client.post("/api/recipe/diff", json={"job_id": j.id, "official": ""})
+    assert r.status_code == 200
+    assert r.json()["summary"]["source"] == "本机导出 /repo/exported_model"
+
+
 def test_recipe_diff_no_job(client):
     r = client.post("/api/recipe/diff", json={"job_id": "nope_123"})
     assert r.status_code == 404
@@ -534,7 +553,8 @@ def test_recipe_diff_relative_export_resolves_to_cd_dir(client, monkeypatch, tmp
     task = runner_mod.Task(task_id="t", remote_cmd="cd /repo && /venv/bin/python hf_ptq.py --model x",
                            log_path=str(tmp_path / "r.log"), pid="1", state="done")
     j = api.REGISTRY.create("quant", task, task.remote_cmd)
-    monkeypatch.setattr(api.runner, "read_log", lambda t, n: "Quantized model exported to: exported_model. done")
+    monkeypatch.setattr(api.runner, "tail_log",
+                        lambda path, n: "Quantized model exported to: exported_model. done")
     cfg_json = json.dumps({"quantization_config": {
         "quant_method": "modelopt", "quant_algo": "NVFP4"}})
     seen = []
@@ -561,7 +581,7 @@ def test_recipe_diff_export_path_flag_wins(client, monkeypatch, tmp_path):
                            remote_cmd="cd /repo && py hf_ptq.py --export_path /out/q4",
                            log_path=str(tmp_path / "r.log"), pid="1", state="done")
     j = api.REGISTRY.create("quant", task, task.remote_cmd)
-    monkeypatch.setattr(api.runner, "read_log", lambda t, n: "no marker here")
+    monkeypatch.setattr(api.runner, "tail_log", lambda path, n: "no marker here")
     cfg_json = json.dumps({"quantization_config": {"quant_method": "modelopt"}})
     seen = []
     monkeypatch.setattr(validate, "run_shell",

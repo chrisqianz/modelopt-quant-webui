@@ -458,14 +458,17 @@ def recipe_diff(req: RecipeDiffRequest) -> dict:
     if job is None:
         raise HTTPException(404, detail={"code": "no_job",
                                          "message": f"job 不存在: {req.job_id}", "detail": ""})
-    if job.task is None:
+    # 用 job 的持久化字段（cmd/log_path），不依赖 job.task：服务重启后终态 job
+    # 的 task 被清空，旧版直接 400「没有可对照的日志」。
+    # venv/eval_env 的 cmd 是 label（非命令、无日志），kind 不是 quant 直接拒。
+    if job.kind != "quant" or (not job.cmd and not job.log_path):
         raise HTTPException(400, detail={"code": "bad_job",
                                          "message": "该 job 没有可对照的日志", "detail": ""})
-    log_tail = runner.read_log(job.task, 5000)
+    log_tail = runner.tail_log(job.log_path, 5000) if job.log_path else ""
     base_dir = ""          # hf_ptq 运行目录（cmd 里 `cd <dir> &&`）——相对导出路径据此解析
     exp_hint = "exported_model"   # hf_ptq --export_path 缺省值
     with contextlib.suppress(Exception):
-        cmd = job.task.remote_cmd
+        cmd = job.cmd
         cdm = re.search(r"(?:^|&&)\s*cd\s+(\S+)", cmd)
         if cdm:
             base_dir = cdm.group(1).strip("'\"")
