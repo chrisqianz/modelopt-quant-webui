@@ -108,6 +108,10 @@ export default function QuantizeView({ data, onModelChange }: {
   const recipeSel = recipes.find((r) => r.name === form.recipe.trim())
   // 扫描失败/空清单退回纯文本（旧行为）；已填但不在菜单里也显输入框
   const showRecipeInput = recipeCustom || recipes.length === 0
+  // 菜单里选了 recipe → hf_ptq 走 recipe.quantize，--qformat 不传、
+  // --kv_cache_qformat 被 PTQ recipe 忽略（hf_ptq.py 帮助文本明说），置灰防误导。
+  // 自定义路径模式不置灰：手写 AutoQuantize 配方仍可能用到 kv fallback。
+  const recipeFromMenu = !!form.recipe && !showRecipeInput
     || (!!form.recipe.trim() && !recipeSel)
   const unmappedFlags = data?.capabilities?.unmapped ?? [] // 逃生口：本版本有、无控件的 flag
   const defaultSize = String(
@@ -279,17 +283,24 @@ export default function QuantizeView({ data, onModelChange }: {
           <Card title="量化">
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
               <Field label="量化格式（qformat）">
-                <select value={form.qformat} onChange={(e) => set('qformat', e.target.value)} className={inputCls}>
+                <select value={form.qformat} onChange={(e) => set('qformat', e.target.value)} disabled={recipeFromMenu}
+                  className={recipeFromMenu ? inputCls + ' opacity-40' : inputCls}>
                   {(vocab?.qformats ?? []).map((q) => <option key={q} value={q}>{q}</option>)}
                 </select>
               </Field>
               <Field label="KV 量化">
-                <select value={form.kv_cache_qformat} onChange={(e) => set('kv_cache_qformat', e.target.value)} className={inputCls}>
+                <select value={form.kv_cache_qformat} onChange={(e) => set('kv_cache_qformat', e.target.value)} disabled={recipeFromMenu}
+                  className={recipeFromMenu ? inputCls + ' opacity-40' : inputCls}>
                   {(vocab?.kv ?? []).map(([name, value]) => (
                     <option key={name} value={value}>{name}</option>
                   ))}
                 </select>
               </Field>
+              {recipeFromMenu && (
+                <p className="col-span-2 text-[11px] leading-snug text-amber-400/90">
+                  已选 recipe：量化格式与 KV 量化由 recipe 自身定义（名字里的 kv_fp8 / kv_none 就是变体），以上两项已忽略
+                </p>
+              )}
               <Field label="recipe（可选）" full>
                 {showRecipeInput ? (
                   <div className="flex items-center gap-2">
