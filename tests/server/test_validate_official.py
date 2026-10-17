@@ -64,3 +64,17 @@ def test_http_status_error_when_curl_ok_but_404(monkeypatch):
     with pytest.raises(RuntimeError) as e:
         validate.fetch_hf_quant_config("nvidia/Missing")
     assert "HTTP 404" in str(e.value)
+
+
+def test_hf_base_model_card_says_nothing_to_compare(monkeypatch):
+    """HF 原模型卡（有 config 无 quantization_config）也要说人话，
+    不能退化成「无法对照：缺少 config_groups」。"""
+    class P:
+        returncode = 0
+        stdout = '{"config":{"architectures":["Qwen3ForCausalLM"]}}\n@@HTTP:200'
+        stderr = ""
+    monkeypatch.setattr(validate.subprocess, "run", lambda *a, **k: P())
+    with pytest.raises(RuntimeError) as e:
+        validate.fetch_official_summary("Qwen/Qwen3.5-4B")
+    msg = str(e.value)
+    assert "原始模型" in msg and "量化模型卡" in msg

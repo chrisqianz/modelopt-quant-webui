@@ -135,7 +135,12 @@ def fetch_official_summary(model_id: str, proxy: str = "") -> QuantSummary:
     if model_id.startswith(("/", "~", "./")):
         return _fetch_local_summary(model_id)
     cfg = fetch_hf_quant_config(model_id, proxy)
-    return summarize(cfg.get("quantization_config", {}), source=model_id)
+    qc = cfg.get("quantization_config")
+    if not qc:
+        raise RuntimeError(f"{model_id} 是原始模型（config 里没有 quantization_config）——"
+                           "官方对照请填量化模型卡（如 nvidia/Qwen3-8B-NVFP4），"
+                           "或本机已下载的量化卡目录")
+    return summarize(qc, source=model_id)
 
 
 def _fetch_local_summary(path: str) -> QuantSummary:
