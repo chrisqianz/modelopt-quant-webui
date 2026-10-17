@@ -83,3 +83,16 @@ def test_scan_recipes_list_form(repo):
         "- quantizer_name: '*mlp*gate_proj*weight_quantizer*'\n  cfg: {$import: nvfp4}\n")
     got = {r["name"] for r in scan_recipes(repo)["recipes"]}
     assert "model_type/qwen3_5/ptq/w4a16_nvfp4-fp8_attn" in got
+
+def test_scan_recipes_dedups_quant_cfg_twins(repo):
+    """xxx.yaml 与 xxx.quant_cfg.yaml 同现只留 xxx；孤儿 .quant_cfg 保留。"""
+    d = repo / "modelopt_recipes" / "model_type" / "qwen3_vl" / "ptq"
+    d.mkdir(parents=True)
+    _LIST = "---\n- quantizer_name: '*x*'\n  cfg: {bits: 8}\n"
+    (d / "paired.yaml").write_text(_OK)
+    (d / "paired.quant_cfg.yaml").write_text(_LIST)
+    (d / "vision_fp8.quant_cfg.yaml").write_text(_LIST)
+    got = {r["name"] for r in scan_recipes(repo)["recipes"]}
+    assert "model_type/qwen3_vl/ptq/paired" in got
+    assert "model_type/qwen3_vl/ptq/paired.quant_cfg" not in got
+    assert "model_type/qwen3_vl/ptq/vision_fp8.quant_cfg" in got

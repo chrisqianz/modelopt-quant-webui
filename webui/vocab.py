@@ -242,6 +242,13 @@ def scan_recipes(repo: str | Path) -> dict[str, object]:
                 desc = " ".join(str((meta or {}).get("description") or "").split())
                 recipes.append({"name": str(f.relative_to(base).with_suffix("")),
                                 "group": group, "description": desc[:200]})
+        # 去重：仓库惯例 xxx.yaml 是完整 recipe、xxx.quant_cfg.yaml 是它的
+        # 内层列表件；两者同现只留 xxx。孤儿 .quant_cfg（如 qwen3_vl 的
+        # vision_fp8）是唯一入口，保留。
+        names = {r["name"] for r in recipes}
+        recipes = [r for r in recipes
+                   if not (r["name"].endswith(".quant_cfg")
+                           and r["name"][:-len(".quant_cfg")] in names)]
         return {"recipes": recipes, "error": "", "skipped": skipped}
     except Exception as ex:  # noqa: BLE001 - 降级为自由输入，不阻塞页面
         return {"recipes": [], "error": str(ex), "skipped": []}
