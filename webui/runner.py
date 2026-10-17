@@ -270,6 +270,30 @@ def _resolve_uv() -> str:
     r, out, _ = run_shell("command -v uv || echo ~/.local/bin/uv", timeout=10)
     return out.splitlines()[-1] if r == 0 and out else "~/.local/bin/uv"
 
+def venv_setup_cmd(uv: str, venv: str, repo: str, proxy_env: str) -> str:
+    """ensure_venv 的一次性安装脚本（纯函数，供单测）。
+
+    主安装 modelopt[hf] 的退出码决定 VENV_DONE rc；尾部两个可选 GPU kernel 是
+    best-effort，成败都不影响主流程 —— 缺了只是线性注意力走参考实现、校准慢，
+    正确性不受影响（transformers 自己的回退就是数学等价的）。"
+    """
+    uvpip = f"VIRTUAL_ENV={venv} {uv} pip"
+    return (
+        f"mkdir -p {venv} && "
+        f"{proxy_env}"
+        f"{uv} venv {venv} --python 3.12 && "
+        f"cd {repo} && "
+        f"{uvpip} install -e '.[hf]' 2>&1; rc=$?; "
+        # 线性注意力快速核（Qwen3.5 等混合架构）：--no-deps 防依赖解析动钉死的
+        # torch cu130；import 失败即回滚，不给 transformers 留半残的可用性探测
+        f"{uvpip} install --no-deps flash-linear-attention 2>&1 | tail -1; "
+        f"{venv}/bin/python -c 'import fla' 2>/dev/null "
+        f"|| {uvpip} uninstall -y flash-linear-attention >/dev/null 2>&1; "
+        # 只吃预编译轮子：新平台（如 sm_120+CUDA13）无 wheel 时秒失败，绝不源码编译
+        f"{uvpip} install --only-binary :all: causal-conv1d 2>&1 | tail -1; "
+        f"echo VENV_DONE rc=$rc"
+    )
+
 def ensure_venv(log, app_cfg: AppConfig) -> None:
     """在本机创建 venv 并安装 modelopt[hf]。长耗时操作走 nohup，轮询日志。
     app_cfg 提供时顺带注入 HF 代理（国内 pypi/HF 都可能受限，统一走代理更稳）。"""
@@ -281,14 +305,7 @@ def ensure_venv(log, app_cfg: AppConfig) -> None:
     uv = _resolve_uv()
     repo = q_remote(app_cfg.local.repo)
     proxy_env = proxy_for(app_cfg)
-    cmd = (
-        f"mkdir -p {venv} && "
-        f"{proxy_env}"
-        f"{uv} venv {venv} --python 3.12 && "
-        f"cd {repo} && "
-        f"VIRTUAL_ENV={venv} {uv} pip install -e '.[hf]' 2>&1; "
-        f"echo VENV_DONE rc=$?"
-    )
+    cmd = venv_setup_cmd(uv, venv, repo, proxy_env)
     fd, log_path = tempfile.mkstemp(prefix="modelopt_venv_setup_", suffix=".log")
     os.close(fd)
     bg_cmd = f"nohup bash -c {shlex.quote(cmd)} > {shlex.quote(log_path)} 2>&1 & echo $!"

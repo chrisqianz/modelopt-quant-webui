@@ -45,6 +45,14 @@ setsid nohup .venv/bin/python app.py >/tmp/moweb.log 2>&1 &
 点状态栏的「创建 venv」——在 `local.venv`（默认项目内 `.venvs/modelopt`）
 里 `uv pip install -e '<ModelOpt 仓库>[hf]'`，日志尾部出现 `VENV_DONE` 即完成。
 
+创建脚本尾部会 best-effort 尝试两个**只影响速度**的 GPU kernel（Qwen3.5 类
+混合架构的线性注意力加速）：`flash-linear-attention`（`--no-deps` 保护钉死的
+torch，import 失败自动回滚）和 `causal-conv1d`（只认预编译轮子，没有就秒
+跳过，绝不源码编译）。装不上无所谓：transformers 自动回退到数学等价的参考
+实现，只是校准慢。故意**不装**的可选包：`flash-attn`（命令固定
+`--attn_implementation sdpa`）、`onnx`/`tensorrt`（属导出链路）、`vllm`（评测
+功能另有环境）。
+
 ## 路径配置
 
 全部写在 `config.yaml` 的 `local:` 段（相对路径按 config.yaml 所在目录解析）：

@@ -396,3 +396,16 @@ class TestPollerSSE:
                 time.sleep(0.05)
         assert calls["n"] >= 2
         assert job.state == "done"
+
+def test_venv_setup_cmd_optional_kernels():
+    """可选 GPU kernel 是 best-effort 尾巴：主安装退出码必须活到 VENV_DONE，
+    fla import 失败必须回滚，causal-conv1d 只准吃预编译轮子。"""
+    cmd = runner.venv_setup_cmd("/usr/bin/uv", "/v", "/repo", "")
+    assert "-e '.[hf]'" in cmd
+    assert "install --no-deps flash-linear-attention" in cmd
+    assert "install --only-binary :all: causal-conv1d" in cmd
+    # 主安装 rc=$? 抢先捕获，可选 kernel 的退出码不得污染 VENV_DONE rc
+    assert "rc=$?" in cmd and cmd.rstrip().endswith("echo VENV_DONE rc=$rc")
+    i = cmd.index("import fla")
+    assert cmd.index("uninstall -y flash-linear-attention") > i
+    assert "import fla" in cmd  # 回滚探测在两个可选安装之间
