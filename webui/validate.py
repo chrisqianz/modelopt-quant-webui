@@ -95,7 +95,7 @@ def fetch_hf_quant_config(model_id: str, proxy: str = "") -> dict[str, Any]:
     if proxy:
         env["http_proxy"] = env["HTTP_PROXY"] = proxy
         env["https_proxy"] = env["HTTPS_PROXY"] = proxy
-    argv = ["curl", "-sL", "--max-time", "30",
+    argv = ["curl", "-sL", "--max-time", "30", "-w", "\n@@HTTP:%{http_code}",
             f"https://huggingface.co/api/models/{model_id}"]
     for k in _HF_PROXY_ENV_KEYS:
         if not proxy:
@@ -105,9 +105,23 @@ def fetch_hf_quant_config(model_id: str, proxy: str = "") -> dict[str, Any]:
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"拉取 {model_id} 超时（40s）") from None
     if proc.returncode != 0 or not proc.stdout.strip():
-        raise RuntimeError(f"拉取 {model_id} 失败: HTTP {proc.returncode} / {proc.stderr.strip()[:120]}")
+        # 注意：这里不是 HTTP 状态码，是 curl 进程退出码——措辞必须区分开，
+        # 否则用户看到「HTTP 5」会以为是服务端 5xx（实际是 exit 5 连不上代理）。
+        _curl_hint = {5: "连不上代理", 6: "域名解析失败（无代理时多为直连不通）",
+                      7: "连不上 huggingface.co", 28: "超时"}.get(proc.returncode, "")
+        hint = f"（{_curl_hint}，可在「系统设置与日志」的 HF 网络面板测连通）" if _curl_hint else ""
+        raise RuntimeError(f"拉取 {model_id} 失败: curl exit {proc.returncode}{hint}"
+                           f" / {proc.stderr.strip()[:120]}")
+    body, _, code = proc.stdout.rpartition("@@HTTP:")
     try:
-        data = json.loads(proc.stdout)
+        status = int(code.strip()[-3:])
+    except ValueError:
+        status = 0
+    if status >= 400:
+        raise RuntimeError(f"拉取 {model_id} 失败: HTTP {status}"
+                           + ("（模型卡不存在或需要授权登录）" if status in (401, 403, 404) else ""))
+    try:
+        data = json.loads(body)
     except ValueError as ex:      # HF 不可达时代理可能回一段 HTML，别把 traceback 抛给 UI
         raise RuntimeError(f"{model_id} 返回的不是 JSON（代理或网络异常）: {ex}") from ex
     if "config" not in data:
@@ -116,8 +130,31 @@ def fetch_hf_quant_config(model_id: str, proxy: str = "") -> dict[str, Any]:
 
 
 def fetch_official_summary(model_id: str, proxy: str = "") -> QuantSummary:
+    # UI placeholder 承诺了「或 /abs/path/config.json」——本地路径必须走文件系统读，
+    # 不能当 HF ID 拼 URL（拼出来是 huggingface.co/api/models//home/... 必然失败）。
+    if model_id.startswith(("/", "~", "./")):
+        return _fetch_local_summary(model_id)
     cfg = fetch_hf_quant_config(model_id, proxy)
     return summarize(cfg.get("quantization_config", {}), source=model_id)
+
+
+def _fetch_local_summary(path: str) -> QuantSummary:
+    """本地对照基准：传模型目录（自动补 config.json）或 config.json 文件本身。"""
+    p = os.path.expanduser(path)
+    if os.path.isdir(p):
+        p = os.path.join(p, "config.json")
+    r, out, err = run_shell(f"cat {shlex.quote(p)} 2>/dev/null", timeout=20)
+    if r != 0 or not out:
+        raise RuntimeError(f"本地对照文件不存在: {p}（可填模型目录或 config.json 路径；"
+                           "若想对照 HF 模型卡，请填 owner/name）")
+    try:
+        cfg = json.loads(out)
+    except json.JSONDecodeError as ex:
+        raise RuntimeError(f"{p} 解析失败: {ex}") from ex
+    if not cfg.get("quantization_config"):
+        raise RuntimeError(f"{p} 里没有 quantization_config——原始模型（BF16）没有量化配置可对，"
+                           "官方对照请填 HF 量化模型卡（如 nvidia/Qwen3-8B-NVFP4）")
+    return summarize(cfg["quantization_config"], source=f"本地 {p}")
 
 
 # ---------------------------------------------------------------- 对照

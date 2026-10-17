@@ -68,7 +68,7 @@ export default function RecipeView() {
           </label>
           <label className="block space-y-1">
             <span className="text-[12px] text-slate-400">
-              官方 summary 路径 / HF model id（可空 = 只看本产物）
+              官方对照：HF 量化模型卡 / 本地量化产物路径（可空 = 只看本产物；原始 BF16 模型没有量化配置可对）
             </span>
             <input
               value={official}
