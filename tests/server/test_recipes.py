@@ -73,3 +73,13 @@ def test_check_recipe_resolution(repo):
 def test_check_recipe_skips_when_repo_unreadable(tmp_path):
     # 与 capabilities 探测失败不拦截同理：仓库不可读宁可漏拦不误杀
     assert check_recipe(tmp_path / "nope", "whatever") is None
+
+def test_scan_recipes_list_form(repo):
+    """仓库的双文档写法：doc1=imports，doc2=quantizer 列表（QuantizerCfgListConfig）。"""
+    d = repo / "modelopt_recipes" / "model_type" / "qwen3_5" / "ptq"
+    d.mkdir(parents=True)
+    (d / "w4a16_nvfp4-fp8_attn.yaml").write_text(
+        "imports:\n  nvfp4: configs/numerics/nvfp4\n---\n"
+        "- quantizer_name: '*mlp*gate_proj*weight_quantizer*'\n  cfg: {$import: nvfp4}\n")
+    got = {r["name"] for r in scan_recipes(repo)["recipes"]}
+    assert "model_type/qwen3_5/ptq/w4a16_nvfp4-fp8_attn" in got

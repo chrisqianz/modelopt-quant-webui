@@ -200,8 +200,10 @@ _RECIPE_GROUPS: tuple[tuple[str, str], ...] = (
 def scan_recipes(repo: str | Path) -> dict[str, object]:
     """运行时扫仓库 modelopt_recipes/，产出 --recipe 可直接填的菜单。
 
-    判据与 modelopt/recipe/loader.py 对齐：yaml 顶层必须有 ``quantize`` 段
-    （无 ``quantize`` 的是组件/非 PTQ 类型，选了会在发射后才报错）。
+    判据与 modelopt/recipe/loader.py 对齐，两种合法形态都认：
+    ① dict 形式：任一文档顶层有 ``quantize`` 段；② quant_cfg list 形式：
+    任一文档是非空 dict 列表（仓库里有双文档写法：doc1=imports、
+    doc2=quantizer 列表，safe_load 会报多文档错，故用 safe_load_all）。
     name = 相对 modelopt_recipes/ 的路径去掉后缀，就是 loader 认的写法。
 
     Returns:
@@ -225,13 +227,18 @@ def scan_recipes(repo: str | Path) -> dict[str, object]:
                 if not f.is_file() or f.suffix not in (".yaml", ".yml"):
                     continue
                 try:
-                    doc = yaml.safe_load(f.read_text())
+                    docs = [d for d in yaml.safe_load_all(f.read_text()) if d]
                 except Exception as ex:  # noqa: BLE001 - 单文件坏了不拖垮整表
                     skipped.append(f"{f.relative_to(base)}: {ex.__class__.__name__}: {ex}")
                     continue
-                if not isinstance(doc, dict) or "quantize" not in doc:
+                is_recipe = any(isinstance(d, dict) and "quantize" in d for d in docs) or any(
+                    isinstance(d, list) and d and all(isinstance(e, dict) for e in d)
+                    for d in docs)
+                if not is_recipe:
                     continue
-                meta = doc.get("metadata")
+                meta = next((d.get("metadata") for d in docs
+                             if isinstance(d, dict) and isinstance(d.get("metadata"), dict)),
+                            None)
                 desc = " ".join(str((meta or {}).get("description") or "").split())
                 recipes.append({"name": str(f.relative_to(base).with_suffix("")),
                                 "group": group, "description": desc[:200]})
