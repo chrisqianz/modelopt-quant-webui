@@ -40,6 +40,18 @@ export interface VocabData {
   error?: string
 }
 
+/** GET /api/recipes（server/api.py scan_recipes，运行时扫仓库 modelopt_recipes/） */
+export interface RecipeEntry {
+  name: string
+  group: string
+  description: string
+}
+
+export interface RecipesData {
+  recipes: RecipeEntry[]
+  error?: string
+}
+
 /** GET /api/capabilities（server/capabilities.py） */
 export interface Capabilities {
   version: string
@@ -98,6 +110,7 @@ export interface Bootstrap {
   net: Net
   probe: HostStatus
   vocab: VocabData
+  recipes: RecipesData
   capabilities: Capabilities
   jobs: JobSummary[]
   defaults: Record<string, unknown>

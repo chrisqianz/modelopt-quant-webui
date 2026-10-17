@@ -103,6 +103,12 @@ export default function QuantizeView({ data, onModelChange }: {
     setForm((f) => ({ ...f, [k]: v }))
 
   const vocab = data?.vocab
+  const recipes = data?.recipes?.recipes ?? []
+  const [recipeCustom, setRecipeCustom] = useState(false)
+  const recipeSel = recipes.find((r) => r.name === form.recipe.trim())
+  // 扫描失败/空清单退回纯文本（旧行为）；已填但不在菜单里也显输入框
+  const showRecipeInput = recipeCustom || recipes.length === 0
+    || (!!form.recipe.trim() && !recipeSel)
   const unmappedFlags = data?.capabilities?.unmapped ?? [] // 逃生口：本版本有、无控件的 flag
   const defaultSize = String(
     typeof data?.defaults?.calib_size === 'number' ? data.defaults.calib_size : 1024,
@@ -285,8 +291,44 @@ export default function QuantizeView({ data, onModelChange }: {
                 </select>
               </Field>
               <Field label="recipe（可选）" full>
-                <input value={form.recipe} onChange={(e) => set('recipe', e.target.value)}
-                  placeholder="留空 = 默认 recipe" className={inputCls} />
+                {showRecipeInput ? (
+                  <div className="flex items-center gap-2">
+                    <input value={form.recipe} onChange={(e) => set('recipe', e.target.value)}
+                      placeholder="留空 = 默认 recipe；或填 GPU 机上的 YAML 绝对路径" className={inputCls} />
+                    {recipes.length > 0 && (
+                      <button type="button" className="shrink-0 text-[11px] text-sky-400 hover:underline"
+                        onClick={() => { setRecipeCustom(false); set('recipe', '') }}>
+                        从菜单选
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <select value={form.recipe}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '__custom__') { setRecipeCustom(true); set('recipe', ''); return }
+                      set('recipe', v)
+                    }}
+                    className={inputCls}>
+                    <option value="">默认（走 qformat 预设）</option>
+                    {recipes.map((r) => r.group).filter((g, i, a) => a.indexOf(g) === i).map((g) => (
+                      <optgroup key={g} label={g}>
+                        {recipes.filter((r) => r.group === g).map((r) => (
+                          <option key={r.name} value={r.name} title={`${r.name}${r.description ? ` — ${r.description}` : ''}`}>
+                            {r.name.split('/').pop()}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <option value="__custom__">✏️ 自定义（手写 YAML 路径）…</option>
+                  </select>
+                )}
+                {recipeSel?.description && (
+                  <p className="mt-1 text-[11px] leading-snug text-zinc-500">{recipeSel.description}</p>
+                )}
+                {data?.recipes?.error && (
+                  <p className="mt-1 text-[11px] text-amber-400/80">recipe 菜单不可用（{data.recipes.error}），可直接填路径</p>
+                )}
               </Field>
             </div>
           </Card>

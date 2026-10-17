@@ -185,3 +185,92 @@ def render_qformat_dropdown(options: list[str], groups: list[QGroup] | None = No
         if item not in seen:
             choices.append((f"[远程新增] {item}", item))
     return choices
+
+# ---------------------------------------------------------------- recipe 菜单
+
+# 组顺序即菜单分组顺序；(仓库内子目录, 组名)。configs/ 是被 imports 引用的
+# 组件（numerics/units），不能独立传给 --recipe，故意不扫。
+_RECIPE_GROUPS: tuple[tuple[str, str], ...] = (
+    ("general/ptq", "官方通用"),
+    ("model_type", "按模型架构"),
+    ("models", "模型专属"),
+)
+
+
+def scan_recipes(repo: str | Path) -> dict[str, object]:
+    """运行时扫仓库 modelopt_recipes/，产出 --recipe 可直接填的菜单。
+
+    判据与 modelopt/recipe/loader.py 对齐：yaml 顶层必须有 ``quantize`` 段
+    （无 ``quantize`` 的是组件/非 PTQ 类型，选了会在发射后才报错）。
+    name = 相对 modelopt_recipes/ 的路径去掉后缀，就是 loader 认的写法。
+
+    Returns:
+        {"recipes": [{"name","group","description"}...], "error": "",
+         "skipped": ["坏文件的解析错误，供排查"]}
+        仓库不可读时 recipes=[] + error，前端自动退回纯文本输入。
+    """
+    import yaml  # noqa: PLC0415 - 只这里需要，别拖慢模块导入
+
+    base = _repo_base(repo) / "modelopt_recipes"
+    try:
+        if not base.is_dir():
+            raise RuntimeError(f"recipe 库目录不存在: {base}")
+        recipes: list[dict[str, str]] = []
+        skipped: list[str] = []
+        for sub, group in _RECIPE_GROUPS:
+            root = base / sub
+            if not root.is_dir():
+                continue
+            for f in sorted(root.rglob("*")):
+                if not f.is_file() or f.suffix not in (".yaml", ".yml"):
+                    continue
+                try:
+                    doc = yaml.safe_load(f.read_text())
+                except Exception as ex:  # noqa: BLE001 - 单文件坏了不拖垮整表
+                    skipped.append(f"{f.relative_to(base)}: {ex.__class__.__name__}: {ex}")
+                    continue
+                if not isinstance(doc, dict) or "quantize" not in doc:
+                    continue
+                meta = doc.get("metadata")
+                desc = " ".join(str((meta or {}).get("description") or "").split())
+                recipes.append({"name": str(f.relative_to(base).with_suffix("")),
+                                "group": group, "description": desc[:200]})
+        return {"recipes": recipes, "error": "", "skipped": skipped}
+    except Exception as ex:  # noqa: BLE001 - 降级为自由输入，不阻塞页面
+        return {"recipes": [], "error": str(ex), "skipped": []}
+
+
+def check_recipe(repo: str | Path, recipe: str) -> str | None:
+    """发射前校验 --recipe 引用。返回 None=可解析；否则给人看的错误语。
+
+    解析顺序对齐 modelopt/recipe/loader.py::_resolve_recipe_path：hf_ptq 是
+    ``cd 仓库 && python`` 起的，所以先按「相对仓库」探测，再退到
+    modelopt_recipes/ 下找，各探测 原样/.yaml/.yml（文件或目录）；绝对路径
+    直接探测。仓库目录不可读时放行——与 capabilities 探测失败不拦截同理，
+    宁可漏拦不误杀。
+    """
+    from contextlib import suppress
+
+    recipe = (recipe or "").strip()
+    if not recipe:
+        return None
+    base = _repo_base(repo)
+    if not base.is_dir():
+        return None
+
+    def _hit(p: Path) -> bool:
+        if p.is_file() or p.is_dir():
+            return True
+        with suppress(ValueError):  # 无 name / 怪后缀时 with_suffix 会抛
+            for suf in (".yaml", ".yml"):
+                if p.with_suffix(suf).is_file():
+                    return True
+        return False
+
+    cand = Path(recipe).expanduser()
+    if cand.is_absolute():
+        return None if _hit(cand) else f"recipe 文件不存在: {recipe}"
+    if _hit(base / recipe) or _hit(base / "modelopt_recipes" / recipe):
+        return None
+    return (f"recipe 不存在: {recipe} —— 从菜单里选，"
+            f"或填 GPU 机（{base.parent}）上的 YAML 绝对路径")

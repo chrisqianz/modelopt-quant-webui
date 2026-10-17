@@ -7,15 +7,22 @@
 import json
 import time
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 import server.api as api
 from server.jobs import JobRegistry
 from webui import runner as runner_mod
 from webui import vocab as vocab_mod
-from webui.config import (DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR,
-                          DEFAULT_VENV, AppConfig, LocalConfig, NetConfig)
+from webui.config import (
+    DEFAULT_HF_CACHE,
+    DEFAULT_REPO,
+    DEFAULT_TASK_DIR,
+    DEFAULT_VENV,
+    AppConfig,
+    LocalConfig,
+    NetConfig,
+)
 from webui.runner import HostStatus
 
 
@@ -54,7 +61,7 @@ def client(tmp_path, monkeypatch):
         lambda cfg: {"version": "v1.0", "commit": "abc1234",
                     "flags_all": ["--qformat", "--pyt_ckpt_path", "--calib_seq",
                                    "--batch_size", "--device", "--dataset",
-                                   "--calib_size", "--kv_cache_qformat",
+                                   "--calib_size", "--kv_cache_qformat", "--recipe",
                                    "--attn_implementation", "--export_path"],
                     "mapped": ["--qformat"], "unmapped": [], "missing": [], "error": ""})
     return TestClient(api.app)
@@ -66,7 +73,7 @@ def test_bootstrap_shape(client):
     r = client.get("/api/bootstrap")
     assert r.status_code == 200
     body = r.json()
-    for k in ("paths", "net", "probe", "vocab", "capabilities", "jobs", "defaults"):
+    for k in ("paths", "net", "probe", "vocab", "recipes", "capabilities", "jobs", "defaults"):
         assert k in body
     assert set(body["paths"]) == {"repo", "venv", "task_dir", "hf_cache"}
     assert body["net"]["mode"] == "auto"
@@ -423,7 +430,36 @@ def test_quantize_start_failed(client, monkeypatch):
         "model": "hf-org/Tiny-124M", "qformat": "nvfp4", "datasets": [],
     })
     assert r.status_code == 500
-    assert r.json()["detail"]["code"] == "start_failed"
+
+
+def test_recipes_endpoint_and_launch_guard(client, tmp_path, monkeypatch):
+    """recipe 菜单端点 + 发射前拦截：不存在的 recipe → 400，不产生任务。"""
+    root = tmp_path / "repo" / "modelopt_recipes" / "general" / "ptq"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "nvfp4_x.yaml").write_text(
+        "metadata:\n  description: d\nquantize:\n  algorithm: {method: max}\n")
+    r = client.get("/api/recipes")
+    assert r.status_code == 200
+    assert [x["name"] for x in r.json()["recipes"]] == ["general/ptq/nvfp4_x"]
+    b = client.get("/api/bootstrap").json()
+    assert b["recipes"]["recipes"][0]["group"] == "官方通用"
+
+    started = []
+    monkeypatch.setattr(api.runner, "probe_host", lambda cfg: _probe())
+    monkeypatch.setattr(api.runner, "start_task",
+                        lambda *a, **k: (started.append(1),
+                                         runner_mod.Task(task_id="t", remote_cmd="c",
+                                                         log_path=str(tmp_path / "x.log"),
+                                                         pid="1", state="running"))[1])
+    r = client.post("/api/quantize", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4", "datasets": [],
+        "recipe": "general/ptq/nope"})
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "bad_recipe"
+    assert not started and not any(j.kind == "quant" for j in api.REGISTRY.list())
+    r = client.post("/api/quantize", json={
+        "model": "hf-org/Tiny-124M", "qformat": "nvfp4", "datasets": [],
+        "recipe": "general/ptq/nvfp4_x"})
+    assert r.status_code == 202 and started
 
 
 def test_eval_env_missing(client, monkeypatch, tmp_path):

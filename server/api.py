@@ -21,16 +21,37 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from server.capabilities import probe_capabilities, validate_cmd_flags
 from server.estimate import estimate as estimate_vram
 from server.jobs import Job, JobRegistry
-from server.schemas import (BaselineRequest, EvalStart, NetRequest,
-                            PathsRequest, PreviewRequest, QuantizeParams,
-                            RecipeDiffRequest)
+from server.schemas import (
+    BaselineRequest,
+    EvalStart,
+    NetRequest,
+    PathsRequest,
+    PreviewRequest,
+    QuantizeParams,
+    RecipeDiffRequest,
+)
 from server.static import mount_static
 from webui import progress, runner, validate, vocab
-from webui.cmds import (build_cmd, build_eval_script, check_local_model,
-                        is_local_model, prettify_cmd, result_tables, task_slug)
-from webui.config import (DEFAULT_HF_CACHE, DEFAULT_REPO, DEFAULT_TASK_DIR,
-                          DEFAULT_VENV, LocalConfig, NetConfig, load_config,
-                          save_local, save_net)
+from webui.cmds import (
+    build_cmd,
+    build_eval_script,
+    check_local_model,
+    is_local_model,
+    prettify_cmd,
+    result_tables,
+    task_slug,
+)
+from webui.config import (
+    DEFAULT_HF_CACHE,
+    DEFAULT_REPO,
+    DEFAULT_TASK_DIR,
+    DEFAULT_VENV,
+    LocalConfig,
+    NetConfig,
+    load_config,
+    save_local,
+    save_net,
+)
 
 CFG = load_config()
 REGISTRY = JobRegistry(CFG)
@@ -131,6 +152,7 @@ def bootstrap() -> dict:
         "net": _net(),
         "probe": dataclasses.asdict(runner.probe_host(CFG)),
         "vocab": _scan_vocab(),
+        "recipes": vocab.scan_recipes(CFG.local.repo),
         "capabilities": probe_capabilities(CFG),
         "jobs": [_job_summary(j) for j in REGISTRY.list()],
         "defaults": CFG.defaults,
@@ -150,6 +172,12 @@ def get_vocab() -> dict:
     return _scan_vocab()
 
 
+@router.get("/recipes")
+def get_recipes() -> dict:
+    """recipe 菜单：运行时扫仓库 modelopt_recipes/（零版本耦合，同 capabilities）。"""
+    return vocab.scan_recipes(CFG.local.repo)
+
+
 @router.get("/capabilities")
 def get_capabilities() -> dict:
     return probe_capabilities(CFG)
@@ -163,6 +191,10 @@ def preview(req: PreviewRequest) -> dict:
     except ValueError as e:
         raise HTTPException(400, detail={"code": "bad_params", "message": str(e), "detail": ""}) from e
     pretty = prettify_cmd(cmd)
+    why = vocab.check_recipe(CFG.local.repo, str(p.get("recipe") or ""))
+    if why:
+        raise HTTPException(400, detail={"code": "bad_recipe",
+                                         "message": why, "detail": ""})
     caps = probe_capabilities(CFG)
     # caps 失败（repo 不可读等）时 flags_all=[] 会把合法命令误判成
     # unknown_flags：error 非空则跳过差集校验，把错误透出给前端。
@@ -355,6 +387,10 @@ def quantize(req: QuantizeParams) -> JSONResponse:
         if why:
             raise HTTPException(400, detail={"code": "bad_model_path",
                                              "message": why, "detail": ""})
+    why = vocab.check_recipe(CFG.local.repo, str(p.get("recipe") or ""))
+    if why:
+        raise HTTPException(400, detail={"code": "bad_recipe",
+                                         "message": why, "detail": ""})
     caps = _caps()
     if not caps.get("error"):
         missing = validate_cmd_flags(cmd, caps["flags_all"])
