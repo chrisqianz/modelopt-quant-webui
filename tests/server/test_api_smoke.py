@@ -574,6 +574,34 @@ def test_recipe_diff_no_job(client):
     assert r.status_code == 404
 
 
+def test_recipe_diff_passes_bare_proxy_url(client, monkeypatch, tmp_path):
+    """回归：官方对照拿到的 proxy 必须是纯 URL。
+
+    旧 bug：把 proxy_for()（shell export 前缀串，拼 nohup 命令用的）当 URL 传给
+    curl，http_proxy 被设成整串「export ...」→ curl exit 5 连不上代理，而网络
+    面板测试（走 proxy_url_for）却是过的——两边不一致最能骗人。"""
+    from webui import validate
+    api.CFG.net.mode = "manual"
+    api.CFG.net.proxy = "192.168.124.24:7890"
+    j = api.REGISTRY.create("quant", None, "cd /repo && /venv/bin/python hf_ptq.py --model x")
+    j.log_path = str(tmp_path / "r.log")
+    j.state = "done"
+    cfg_json = json.dumps({"quantization_config": {"quant_method": "modelopt"}})
+    monkeypatch.setattr(api.runner, "tail_log", lambda path, n: "exported to: exported_model")
+    monkeypatch.setattr(validate, "run_shell", lambda cmd, timeout=60: (0, cfg_json, ""))
+    seen = {}
+
+    def fake_official(model_id, proxy=""):
+        seen["proxy"] = proxy
+        return validate.QuantSummary(source=model_id)
+
+    monkeypatch.setattr(validate, "fetch_official_summary", fake_official)
+    r = client.post("/api/recipe/diff", json={"job_id": j.id, "official": "nvidia/Fake-NVFP4"})
+    assert r.status_code == 200
+    assert seen["proxy"] == "http://192.168.124.24:7890"
+    assert "export " not in seen["proxy"]
+
+
 def test_recipe_diff_bad_job(client):
     j = api.REGISTRY.create("venv", None, "x")
     r = client.post("/api/recipe/diff", json={"job_id": j.id})

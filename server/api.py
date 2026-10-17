@@ -515,7 +515,10 @@ def recipe_diff(req: RecipeDiffRequest) -> dict:
     diff = ""
     if req.official.strip():
         try:
-            off = validate.fetch_official_summary(req.official, proxy=runner.proxy_for(CFG))
+            # 注意用 proxy_url_for（纯 URL）：proxy_for 返回的是 shell export 前缀串，
+            # 当 URL 传给 curl 会把 http_proxy 设成整串「export ...」→ exit 5。
+            off = validate.fetch_official_summary(req.official,
+                                                  proxy=runner.proxy_url_for(CFG)[0])
             diff = "\n\n".join(validate.diff_summaries(mine, off))
         except Exception as e:  # noqa: BLE001 官方对照失败不炸主产物
             diff = f"⚠ 官方对照失败: {e}"
