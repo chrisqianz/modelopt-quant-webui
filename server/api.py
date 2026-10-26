@@ -227,11 +227,14 @@ def job_detail(job_id: str) -> dict:
                                          "message": f"job 不存在: {job_id}",
                                          "detail": ""})
     # quant/eval 有 Task；venv/eval_env 是包装线程（task is None），直接读 log_path
+    # 窗口用 1MB 而不是 30KB：刷新页面后 LogPanel 靠这份 tail 兜底，窗口太小会把
+    # 日志开头的「Loading dataset / Use calib batch_size」等关键行切掉，
+    # 让用户误以为校准数据集没参与（33B 实跑日志 73KB 实证）。
     if job.task is not None:
-        log_tail = runner.read_log(job.task, 30000)
+        log_tail = runner.read_log(job.task, 2 ** 20)
         prog = progress.parse(log_tail)
     else:
-        log_tail = runner.tail_log(job.log_path, 30000)
+        log_tail = runner.tail_log(job.log_path, 2 ** 20)
         prog = progress.parse_install(log_tail.splitlines())
     result_tables_out = (result_tables(runner.fetch_eval_results(str(CFG.local.task_path)))[0]
                          if job.kind == "eval" else None)
