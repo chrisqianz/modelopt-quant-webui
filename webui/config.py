@@ -70,6 +70,7 @@ class LocalConfig:
 class NetConfig:
     mode: str = PROXY_AUTO
     proxy: str = ""
+    hf_token: str = ""   # HF 访问令牌：gated 数据集用；只存 net.json，不回显前端
 
 
 @dataclass

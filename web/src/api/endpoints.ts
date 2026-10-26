@@ -43,5 +43,6 @@ export const api = {
   // 控制 / 持久化
   abort: (id: string) => request<{ message: string }>(`/jobs/${encodeURIComponent(id)}/abort`, { method: 'POST' }),
   putPaths: (p: Paths) => request<{ message: string }>('/paths', { method: 'PUT', body: JSON.stringify(p) }),
-  putNet: (n: Net) => request<{ message: string }>('/net', { method: 'PUT', body: JSON.stringify(n) }),
+  // hf_token：省略=保持已存；""=清空；非空=替换。GET 回的 hf_token_set 不能回传（extra=forbid）。
+  putNet: (n: { mode: string; proxy: string; hf_token?: string }) => request<{ message: string }>('/net', { method: 'PUT', body: JSON.stringify(n) }),
 }

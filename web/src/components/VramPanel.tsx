@@ -110,7 +110,7 @@ export default function VramPanel({ open, onClose, model, qformat }: Props) {
           </div>
 
           <button onClick={() => void run()} disabled={loading}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/90 hover:bg-cyan-400 text-slate-950 text-[13px] font-semibold disabled:opacity-50 transition-colors">
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/90 hover:bg-cyan-400 text-[#020617] text-[13px] font-semibold disabled:opacity-50 transition-colors">
             {loading ? '估算中…' : '估算显存'}
           </button>
 

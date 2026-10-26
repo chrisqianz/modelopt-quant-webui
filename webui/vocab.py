@@ -23,7 +23,7 @@ def _repo_base(repo: str | Path) -> Path:
 
 # 快照来自 modelopt/torch/utils/dataset_utils.py（SUPPORTED_DATASET_CONFIG）。
 # key = --dataset 的取值；desc = 界面说明。
-DATASETS: list[dict[str, str]] = [
+DATASETS: list[dict[str, Any]] = [
     {"key": "nemotron-sft-instruction-following-chat-v2", "desc": "Nemotron 指令跟随（对话）"},
     {"key": "nemotron-science-v1", "desc": "Nemotron 科学问答"},
     {"key": "nemotron-competitive-programming-v1", "desc": "Nemotron 竞赛编程"},
@@ -31,7 +31,7 @@ DATASETS: list[dict[str, str]] = [
     {"key": "nemotron-math-v2", "desc": "Nemotron 数学推理"},
     {"key": "nemotron-sft-swe-v2", "desc": "Nemotron SWE（软件工程）"},
     {"key": "nemotron-sft-multilingual-v1", "desc": "Nemotron 多语言"},
-    {"key": "nemotron-post-training-dataset-v2", "desc": "Nemotron 后训练混合 v2"},
+    {"key": "nemotron-post-training-dataset-v2", "desc": "Nemotron 后训练混合 v2", "gated": True},
     {"key": "nemotron-post-training-dataset-v1", "desc": "Nemotron 后训练混合 v1"},
     {"key": "llama-nemotron-post-training-dataset", "desc": "LLaMA 风格 Nemotron 后训练混合"},
     {"key": "open_code_reasoning", "desc": "开源代码推理"},

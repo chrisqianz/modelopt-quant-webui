@@ -49,6 +49,8 @@ export default function SettingsView({ data, onSaved }: { data: Bootstrap | null
   // 网络卡
   const [net, setNet] = useState<Net>({ mode: 'auto', proxy: '' })
   const [netResult, setNetResult] = useState<{ ok: boolean; detail: string } | null>(null)
+  const [hfToken, setHfToken] = useState('')           // 明文只存内存，保存后即清
+  const [hfTokenSet, setHfTokenSet] = useState(false)  // 服务端已存（GET 永不回显值）
   // 探活卡
   const [probe, setProbe] = useState<HostStatus | null>(null)
   const [probing, setProbing] = useState(false)
@@ -65,6 +67,7 @@ export default function SettingsView({ data, onSaved }: { data: Bootstrap | null
     if (!data) return
     setPaths(data.paths)
     setNet(data.net)
+    setHfTokenSet(!!data.net.hf_token_set)
     setProbe(data.probe)
   }, [data])
 
@@ -80,8 +83,25 @@ export default function SettingsView({ data, onSaved }: { data: Bootstrap | null
 
   const saveNet = async () => {
     try {
-      await api.putNet(net)
-      toast.show('网络模式已保存到 net.json')
+      const payload: { mode: string; proxy: string; hf_token?: string } =
+        { mode: net.mode, proxy: net.proxy }
+      if (hfToken.trim()) payload.hf_token = hfToken.trim()  // 省略 = 保持已存令牌
+      await api.putNet(payload)
+      if (hfToken.trim()) setHfTokenSet(true)
+      setHfToken('')
+      toast.show('网络设置已保存到 net.json')
+      onSaved()
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : String(e), 'error')
+    }
+  }
+
+  const clearHfToken = async () => {
+    try {
+      await api.putNet({ mode: net.mode, proxy: net.proxy, hf_token: '' })
+      setHfTokenSet(false)
+      setHfToken('')
+      toast.show('已清空 HF_TOKEN')
       onSaved()
     } catch (e) {
       toast.show(e instanceof Error ? e.message : String(e), 'error')
@@ -293,6 +313,35 @@ export default function SettingsView({ data, onSaved }: { data: Bootstrap | null
             />
           </label>
         </div>
+        <label className="block space-y-1">
+          <span className="text-[12px] text-slate-400">
+            HF_TOKEN{' '}
+            {hfTokenSet
+              ? <span className="text-emerald-400">（已设置，留空保持不变）</span>
+              : <span className="text-slate-500">（未设置；gated 数据集需要）</span>}
+          </span>
+          <div className="flex gap-2 items-center">
+            <input
+              type="password"
+              value={hfToken}
+              onChange={(e) => setHfToken(e.target.value)}
+              placeholder={hfTokenSet ? '••••••••（留空保持不变）' : 'hf_…（可选，HF 网站 → Settings → Access Tokens 建 Read 令牌）'}
+              className={inputCls}
+              autoComplete="off"
+            />
+            {hfTokenSet && (
+              <button
+                onClick={() => void clearHfToken()}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-slate-800 text-slate-300 hover:bg-slate-700"
+              >
+                清空
+              </button>
+            )}
+          </div>
+          <span className="block text-[11px] text-slate-500">
+            量化/评测任务以环境变量注入子进程；不进命令行、不落盘 run.sh（ps 不可见）
+          </span>
+        </label>
         <div className="flex items-center gap-3">
           <button
             onClick={() => void saveNet()}

@@ -48,3 +48,7 @@
 - 量化区默认 qformat=nvfp4、KV=none（不量化 KV）；数据集列表来自后端能力探测
 - 空态文案：配方区「还没有 quant job」、仓库区「暂无产物 (task_dir 下没有带 run.log 的目录)」、任务区「暂无任务」
 - 控制台：五区往返切换后 `errors` 为空
+
+## 明暗主题（2026-10-26 起）
+- `baseline/`+`current/` 均为 **dark** 语义：重拍前先 `localStorage.setItem('mq-theme','dark')` 再 `open`（headless Chrome 默认 prefers-color-scheme:light，预渲染脚本会让新用户跟随系统）。
+- `light/` 为浅色主题留档 8 张（同协议同滚动），不参与 diff.py 门禁；主题改动后需同步重拍并目测对比度。

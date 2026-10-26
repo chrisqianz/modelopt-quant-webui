@@ -365,6 +365,14 @@ export default function QuantizeView({ data, onModelChange }: {
                     />
                     <span className="text-[13px] text-slate-200 w-40 font-mono">{d.key}</span>
                     <span className="text-[12px] text-slate-500 truncate flex-1">{d.desc}</span>
+                    {d.gated && (
+                      <span
+                        title="gated 数据集：先在 HF 网页同意条款，再在「系统设置与日志」填 HF_TOKEN（或 GPU 机 hf auth login）"
+                        className="shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-amber-500/10 border border-amber-500/30 text-amber-300"
+                      >
+                        ⚠ 需授权
+                      </span>
+                    )}
                     {on && (
                       <input
                         value={sizeOf(d.key)}

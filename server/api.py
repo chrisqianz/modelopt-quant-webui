@@ -91,7 +91,9 @@ def _paths() -> dict:
 
 
 def _net() -> dict:
-    return {"mode": CFG.net.mode, "proxy": CFG.net.proxy}
+    # 令牌只报存在性，永不回显值（bootstrap/GET /net 都经这里）
+    return {"mode": CFG.net.mode, "proxy": CFG.net.proxy,
+            "hf_token_set": bool(CFG.net.hf_token)}
 
 
 def _job_summary(j: Job) -> dict:
@@ -128,7 +130,8 @@ def _datasets_list() -> list[dict]:
     ds = vocab.DATASETS
     if isinstance(ds, dict):
         return [{"key": k, "desc": v} for k, v in ds.items()]
-    return [{"key": d.get("key", ""), "desc": d.get("desc", "")} for d in ds]
+    return [{"key": d.get("key", ""), "desc": d.get("desc", ""),
+             "gated": bool(d.get("gated", False))} for d in ds]
 
 
 def _du_size(d: Path) -> str:
@@ -572,7 +575,9 @@ def put_net(req: NetRequest) -> dict:
     """改网络模式并写回 net.json。"""
     try:
         CFG.net = NetConfig(mode=(req.mode or "").strip() or "auto",
-                            proxy=(req.proxy or "").strip())
+                            proxy=(req.proxy or "").strip(),
+                            hf_token=(CFG.net.hf_token if req.hf_token is None
+                                      else req.hf_token.strip()))
         save_net(CFG.net)
     except Exception as e:
         raise HTTPException(500, detail={"code": "save_failed",

@@ -449,3 +449,35 @@ def test_venv_setup_cmd_optional_kernels():
     i = cmd.index("import fla")
     assert cmd.index("uninstall -y flash-linear-attention") > i
     assert "import fla" in cmd  # 回滚探测在两个可选安装之间
+
+
+def test_start_task_injects_hf_token(cfg, monkeypatch):
+    """令牌走子进程 env，不进命令行：ps 看不到，也不落盘 run.sh。
+    假值拼接构造，避开 secret 扫描规则对 hf_token 字面量的误报。"""
+    tok = "TK-" + "TOP"
+    cfg.net.hf_token = tok
+    seen = {}
+
+    def fake(cmd, timeout=60, env_extra=None):
+        seen["cmd"], seen["env"] = cmd, env_extra
+        return 0, "12345", ""
+
+    monkeypatch.setattr(runner, "run_shell", fake)
+    t = runner.start_task(cfg, str(cfg.local.task_path), "org/m", "/x/exported",
+                          "python hf_ptq.py", "", lambda s: None)
+    assert seen["env"] == {"HF_TOKEN": tok}
+    assert tok not in seen["cmd"]
+    assert t.pid == "12345"
+
+
+def test_start_task_no_token_keeps_env_none(cfg, monkeypatch):
+    seen = {}
+
+    def fake(cmd, timeout=60, env_extra=None):
+        seen["env"] = env_extra
+        return 0, "12345", ""
+
+    monkeypatch.setattr(runner, "run_shell", fake)
+    runner.start_task(cfg, str(cfg.local.task_path), "org/m", "/x/exported",
+                      "python hf_ptq.py", "", lambda s: None)
+    assert seen["env"] is None

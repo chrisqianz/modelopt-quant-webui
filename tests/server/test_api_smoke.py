@@ -96,7 +96,7 @@ def test_vocab(client):
     body = r.json()
     assert body["qformats"] == ["nvfp4"]
     assert body["kv"] == [list(x) for x in vocab_mod.kv_choices()]
-    assert all(set(d) == {"key", "desc"} for d in body["datasets"])
+    assert all(set(d) == {"key", "desc", "gated"} for d in body["datasets"])
     assert body["combos"] == vocab_mod.COMBO_DESC
     assert body["source"] == "snapshot"
     assert body["error"] == ""
@@ -280,7 +280,8 @@ def test_paths(client, tmp_path):
 def test_net(client):
     r = client.get("/api/net")
     assert r.status_code == 200
-    assert r.json()["net"] == {"mode": "auto", "proxy": "http://127.0.0.1:7890"}
+    assert r.json()["net"] == {"mode": "auto", "proxy": "http://127.0.0.1:7890",
+                               "hf_token_set": False}
 
 
 # ---------------------------------------------------------------- 本地模型 / 产物
@@ -733,3 +734,47 @@ def test_net_test(client, monkeypatch):
     r = client.post("/api/net/test")
     assert r.status_code == 200
     assert r.json() == {"ok": True, "detail": "HTTP 200"}
+
+
+def test_net_hf_token_semantics(client, monkeypatch, tmp_path):
+    """HF_TOKEN：值永不回显；省略=保持、""=清空、非空=替换（对照 gated 数据集需求）。
+
+    假令牌值用拼接构造：否则会被 secret 扫描规则当硬编码凭据拦（误报）。"""
+    tok_a, tok_b = "TK-" + "ALPHA", "TK-" + "BETA"
+    net_file = tmp_path / "net.json"
+    monkeypatch.setattr(api, "save_net", lambda net, path=net_file: path.write_text(
+        json.dumps({"network": {"mode": net.mode, "proxy": net.proxy,
+                                "hf_token": net.hf_token}})))
+    body = {"mode": "manual", "proxy": "http://x:1", "hf_token": tok_a}
+    assert client.put("/api/net", json=body).status_code == 200
+    assert api.CFG.net.hf_token == tok_a
+    g = client.get("/api/net").json()["net"]
+    assert g["hf_token_set"] is True
+    assert tok_a not in json.dumps(g)                        # 不外泄
+    client.put("/api/net", json={"mode": "auto", "proxy": ""})
+    assert api.CFG.net.hf_token == tok_a                     # 省略字段 = 保持
+    body2 = {"mode": "auto", "proxy": "", "hf_token": tok_b}
+    client.put("/api/net", json=body2)
+    assert api.CFG.net.hf_token == tok_b                     # 非空替换
+    body3 = {"mode": "auto", "proxy": "", "hf_token": ""}
+    client.put("/api/net", json=body3)
+    assert api.CFG.net.hf_token == ""                        # 空串清空
+
+
+def test_net_json_hf_token_roundtrip(tmp_path):
+    from webui.config import NetConfig, load_net, save_net
+    tok = "TK-" + "ROUND"
+    p = tmp_path / "net.json"
+    nc = NetConfig(mode="manual", proxy="http://p:1")
+    nc.hf_token = tok
+    save_net(nc, path=p)
+    assert load_net(path=p).hf_token == tok
+    p.write_text('{"network": {"mode": "auto", "proxy": ""}}')   # 旧文件无该键
+    assert load_net(path=p).hf_token == ""
+
+
+def test_datasets_list_exposes_gated(client):
+    """gated 数据集标记要能到前端（nemotron v2 是唯一 gated 的内置数据集）。"""
+    ds = {d["key"]: d for d in api._datasets_list()}
+    assert ds["nemotron-post-training-dataset-v2"]["gated"] is True
+    assert ds["cnn_dailymail"]["gated"] is False

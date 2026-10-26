@@ -1,5 +1,6 @@
-/** 顶栏：区标题 + 版本徽章 + 显存估算按钮 + GPU 显存指示。 */
-import { Calculator } from 'lucide-react'
+/** 顶栏：区标题 + 版本徽章 + 主题切换 + 显存估算按钮 + GPU 显存指示。 */
+import { useState } from 'react'
+import { Calculator, Moon, Sun } from 'lucide-react'
 import type { Capabilities, HostStatus } from '../api/types'
 
 export default function TopBar({
@@ -12,6 +13,14 @@ export default function TopBar({
 }) {
   const reachable = probe?.reachable ?? false
   const busy = probe?.gpu_busy ?? false
+  // 主题：初始值由 index.html 预渲染脚本定（localStorage 优先，其次系统偏好）
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark')
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    document.documentElement.dataset.theme = next
+    localStorage.setItem('mq-theme', next)
+    setTheme(next)
+  }
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-slate-800/80 bg-slate-950/60 backdrop-blur">
       <h1 className="text-base font-semibold text-slate-100">{title}</h1>
@@ -21,6 +30,13 @@ export default function TopBar({
             ModelOpt {caps.version}
           </span>
         )}
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? '切换到浅色' : '切换到深色'}
+          className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+        >
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <button
           onClick={onOpenEstimate}
           title="显存估算"

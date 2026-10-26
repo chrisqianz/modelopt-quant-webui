@@ -94,6 +94,7 @@ class NetRequest(BaseModel):
 
     mode: str
     proxy: str = ""
+    hf_token: str | None = None   # None=保持现有；""=清空；非空=替换
 
 
 class BaselineRequest(BaseModel):

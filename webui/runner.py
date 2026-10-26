@@ -54,9 +54,20 @@ def _exec(argv: list[str], timeout: int = 60,
         return -1, "", f"命令超时 ({timeout}s): {' '.join(argv[-2:])[:120]}"
 
 
-def run_shell(cmd: str, timeout: int = 60) -> tuple[int, str, str]:
-    """在本机跑一段 bash。返回 (rc, stdout, stderr)。"""
-    return _exec(["bash", "-c", cmd], timeout=timeout)
+def run_shell(cmd: str, timeout: int = 60,
+              env_extra: dict | None = None) -> tuple[int, str, str]:
+    """在本机跑一段 bash。返回 (rc, stdout, stderr)。
+
+    env_extra：额外注入子进程的环境变量（如 HF_TOKEN）。走 subprocess env
+    而非命令串：令牌不进 ps 可见的命令行，也不落盘 run.sh。"""
+    env = {**os.environ, **env_extra} if env_extra else None
+    return _exec(["bash", "-c", cmd], timeout=timeout, env=env)
+
+
+def hf_task_env(cfg: AppConfig) -> dict | None:
+    """任务启动用的 HF 环境（令牌未配则 None，行为与从前一致）。"""
+    tok = getattr(cfg.net, "hf_token", "")
+    return {"HF_TOKEN": tok} if tok else None
 
 
 def check_connection() -> str:
@@ -431,7 +442,7 @@ def start_task(cfg: AppConfig, task_dir: str, model: str, export_dir: str,
         f"export PATH={q_remote(cfg.local.venv)}/bin:$PATH && {proxy_env} "
         f"nohup bash -c {shlex.quote(remote_cmd)} > {q_remote(log_path)} 2>&1 & echo $!"
     )
-    r, out, err = run_shell(cmd, timeout=30)
+    r, out, err = run_shell(cmd, timeout=30, env_extra=hf_task_env(cfg))
     if r != 0:
         log(f"任务启动失败: {err}")
         raise RuntimeError(err)
@@ -460,7 +471,7 @@ def start_script_task(cfg: AppConfig, task_dir_full: str, script: str,
         f"export PATH={q_remote(cfg.local.venv)}/bin:$PATH && {proxy_env}"
         f"nohup bash run.sh > run.log 2>&1 & echo $!"
     )
-    r, out, err = run_shell(launch, timeout=30)
+    r, out, err = run_shell(launch, timeout=30, env_extra=hf_task_env(cfg))
     if r != 0:
         log(f"任务启动失败: {err}")
         raise RuntimeError(err)

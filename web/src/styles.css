@@ -4,3 +4,141 @@
 .font-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
+
+/* ─── 明暗主题 ────────────────────────────────────────────────────────────
+ * Tailwind v4 的工具类引用 @theme 调色板变量，但**带 alpha 的类会被内联成
+ * 十六进制**（bg-slate-900/60 → #0f172b99），只覆盖 :root 变量翻不动它们。
+ * 所以这里把用到的色板全部用 var 间接层重新注册（@theme inline）：
+ * 构建期无法内联 → 运行时输出 color-mix(var(--app-*))，换 [data-theme] 即整套翻转。
+ * 深色值与 Tailwind 默认色板一致（像素基线依赖这一点）；浅色 = 中性色对调 +
+ * 强调文字色加深保证对比度。950 档的「深色底 tint」在浅色下换成对应 50 档。 */
+@theme inline {
+  --color-slate-100: var(--app-slate-100);
+  --color-slate-200: var(--app-slate-200);
+  --color-slate-300: var(--app-slate-300);
+  --color-slate-400: var(--app-slate-400);
+  --color-slate-500: var(--app-slate-500);
+  --color-slate-600: var(--app-slate-600);
+  --color-slate-700: var(--app-slate-700);
+  --color-slate-800: var(--app-slate-800);
+  --color-slate-900: var(--app-slate-900);
+  --color-slate-950: var(--app-slate-950);
+  --color-amber-300: var(--app-amber-300);
+  --color-amber-400: var(--app-amber-400);
+  --color-amber-500: var(--app-amber-500);
+  --color-amber-600: var(--app-amber-600);
+  --color-amber-950: var(--app-amber-950);
+  --color-cyan-300: var(--app-cyan-300);
+  --color-cyan-400: var(--app-cyan-400);
+  --color-cyan-500: var(--app-cyan-500);
+  --color-cyan-600: var(--app-cyan-600);
+  --color-cyan-800: var(--app-cyan-800);
+  --color-cyan-950: var(--app-cyan-950);
+  --color-emerald-200: var(--app-emerald-200);
+  --color-emerald-300: var(--app-emerald-300);
+  --color-emerald-400: var(--app-emerald-400);
+  --color-emerald-500: var(--app-emerald-500);
+  --color-emerald-950: var(--app-emerald-950);
+  --color-rose-200: var(--app-rose-200);
+  --color-rose-300: var(--app-rose-300);
+  --color-rose-400: var(--app-rose-400);
+  --color-rose-500: var(--app-rose-500);
+  --color-rose-600: var(--app-rose-600);
+  --color-rose-950: var(--app-rose-950);
+  --color-sky-400: var(--app-sky-400);
+  --color-violet-200: var(--app-violet-200);
+  --color-violet-300: var(--app-violet-300);
+  --color-violet-400: var(--app-violet-400);
+  --color-violet-500: var(--app-violet-500);
+  --color-violet-600: var(--app-violet-600);
+  --color-violet-950: var(--app-violet-950);
+}
+
+/* 深色 = Tailwind 默认色板值 */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --app-slate-100: #f1f5f9;
+  --app-slate-200: #e2e8f0;
+  --app-slate-300: #cbd5e1;
+  --app-slate-400: #94a3b8;
+  --app-slate-500: #64748b;
+  --app-slate-600: #475569;
+  --app-slate-700: #334155;
+  --app-slate-800: #1e293b;
+  --app-slate-900: #0f172a;
+  --app-slate-950: #020617;
+  --app-amber-300: #fcd34d;
+  --app-amber-400: #fbbf24;
+  --app-amber-500: #f59e0b;
+  --app-amber-600: #d97706;
+  --app-amber-950: #451a03;
+  --app-cyan-300: #67e8f9;
+  --app-cyan-400: #22d3ee;
+  --app-cyan-500: #06b6d4;
+  --app-cyan-600: #0891b2;
+  --app-cyan-800: #164e63;
+  --app-cyan-950: #083344;
+  --app-emerald-200: #a7f3d0;
+  --app-emerald-300: #6ee7b7;
+  --app-emerald-400: #34d399;
+  --app-emerald-500: #10b981;
+  --app-emerald-950: #022c22;
+  --app-rose-200: #fecdd3;
+  --app-rose-300: #fda4af;
+  --app-rose-400: #fb7185;
+  --app-rose-500: #f43f5e;
+  --app-rose-600: #e11d48;
+  --app-rose-950: #4c0519;
+  --app-sky-400: #38bdf8;
+  --app-violet-200: #ddd6fe;
+  --app-violet-300: #c4b5fd;
+  --app-violet-400: #a78bfa;
+  --app-violet-500: #8b5cf6;
+  --app-violet-600: #7c3aed;
+  --app-violet-950: #2e1065;
+}
+
+/* 浅色：中性色对调（950 底→近白、100 字→近墨）；强调文字取同族深档 */
+[data-theme="light"] {
+  color-scheme: light;
+  --app-slate-100: #0f172a;
+  --app-slate-200: #1e293b;
+  --app-slate-300: #334155;
+  --app-slate-400: #475569;
+  --app-slate-500: #64748b;
+  --app-slate-600: #94a3b8;
+  --app-slate-700: #cbd5e1;
+  --app-slate-800: #e2e8f0;
+  --app-slate-900: #ffffff;
+  --app-slate-950: #f8fafc;
+  --app-amber-300: #92400e;
+  --app-amber-400: #b45309;
+  --app-amber-500: #d97706;
+  --app-amber-600: #d97706;
+  --app-amber-950: #fff7ed;
+  --app-cyan-300: #0e7490;
+  --app-cyan-400: #0891b2;
+  --app-cyan-500: #0891b2;
+  --app-cyan-600: #0e7490;
+  --app-cyan-800: #a5f3fc;
+  --app-cyan-950: #ecfeff;
+  --app-emerald-200: #065f46;
+  --app-emerald-300: #047857;
+  --app-emerald-400: #059669;
+  --app-emerald-500: #059669;
+  --app-emerald-950: #ecfdf5;
+  --app-rose-200: #9f1239;
+  --app-rose-300: #be123c;
+  --app-rose-400: #e11d48;
+  --app-rose-500: #e11d48;
+  --app-rose-600: #e11d48;
+  --app-rose-950: #fff1f2;
+  --app-sky-400: #0284c7;
+  --app-violet-200: #5b21b6;
+  --app-violet-300: #6d28d9;
+  --app-violet-400: #7c3aed;
+  --app-violet-500: #7c3aed;
+  --app-violet-600: #7c3aed;
+  --app-violet-950: #f5f3ff;
+}

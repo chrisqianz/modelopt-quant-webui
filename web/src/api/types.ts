@@ -34,7 +34,7 @@ export interface ProgressReport {
 export interface VocabData {
   qformats: string[]
   kv: [string, string][]
-  datasets: { key: string; desc: string }[]
+  datasets: { key: string; desc: string; gated?: boolean }[]
   combos: Record<string, string>
   source?: string
   error?: string
@@ -102,6 +102,7 @@ export interface Paths {
 export interface Net {
   mode: string // auto | direct | manual
   proxy: string
+  hf_token_set?: boolean // 后端只回「是否已设置」，永不回显值
 }
 
 /** GET /api/bootstrap（首屏一把） */

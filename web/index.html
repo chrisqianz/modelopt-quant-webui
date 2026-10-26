@@ -5,6 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ModelOpt Quant</title>
+    <script>
+      // 主题首帧前预渲染防 FOUC：localStorage 优先，其次系统偏好，兜底深色
+      try {
+        var t = localStorage.getItem('mq-theme') ||
+          (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        document.documentElement.dataset.theme = t
+      } catch (e) { document.documentElement.dataset.theme = 'dark' }
+    </script>
   </head>
   <body>
     <div id="root"></div>
