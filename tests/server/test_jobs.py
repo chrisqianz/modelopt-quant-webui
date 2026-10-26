@@ -277,6 +277,52 @@ class TestPollerSSE:
             assert merged.count(token) == 1, f"{token!r} 重复/丢失: {merged!r}"
         assert "Quantized model exported to" in merged
 
+    def test_poller_progress_stage_monotonic(self, registry, cfg):
+        """回归（2026-10-26 Nanbeige 33B 实跑）：tail 窗口冲掉早期阶段 marker 后，
+        61 分钟校准期进度卡片回退成「第 1/7 步 · 启动」。修后 poller 持
+        progress_stage 地板，广播的 stage_idx 绝不回退。"""
+        d = cfg.local.task_path / "quant_stage"
+        d.mkdir(parents=True)
+        task = runner.Task(task_id="quant_stage", remote_cmd="true",
+                           log_path=str(d / "run.log"), pid="1", state="running")
+        job = registry.create("quant", task, "cmd")
+        rounds = [
+            "Loading pretrained model\nUse calib batch_size 1\n"
+            "Calibrating:  30%|███ | 300/1024 [00:10<00:20, 30.0it/s]\n",
+            # 窗口只剩校准条本身——早期 marker 全被冲出，无地板时 stage 会退回 0
+            "Calibrating:  70%|██████ | 700/1024 [00:30<00:10, 30.0it/s]\n",
+            "Calibrating:  99%|███████▉| 1023/1024 [00:59<00:00, 30.0it/s]\n"
+            "Quantized model exported to: /x/out\n",
+        ]
+        st = {"polls": 0}
+
+        def fake_poll(t):
+            st["polls"] += 1
+            t.state = "running" if st["polls"] < 3 else "done"
+
+        async def main():
+            with patch.object(jobs_mod.runner, "poll_task", fake_poll), \
+                 patch.object(jobs_mod.runner, "read_log",
+                              lambda t, tail_bytes=20000: rounds[min(st["polls"], 2)]), \
+                 patch.object(jobs_mod, "_sleep", lambda s: time.sleep(0.05)):
+                q, start = registry.subscribe(job)
+                registry.start_poller(job)
+                text = ""
+                evs: list[dict] = []
+                async for line in registry.sse_stream(job, q, start):
+                    text += line
+                    evs = _sse_events(text)
+                    if evs and evs[-1]["type"] == "state":
+                        break
+                return evs
+
+        events = asyncio.run(main())
+        stages = [e["data"]["stage_idx"] for e in events if e["type"] == "progress"]
+        assert stages, "应有 progress 事件"
+        assert all(a <= b for a, b in zip(stages, stages[1:], strict=False)), f"stage 回退: {stages}"
+        assert max(stages) >= 3, f"至少推进到校准阶段: {stages}"
+        assert job.state == "done"
+
     def test_sse_stream_replay_dedup(self, registry, cfg):
         """start_offset 之后的日志走重放（event: log），去重游标内的 log 跳过。"""
         d = cfg.local.task_path / "quant_replay"

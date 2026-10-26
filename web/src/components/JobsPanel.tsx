@@ -33,12 +33,22 @@ export default function JobsPanel() {
   const [err, setErr] = useState('')
   const toast = useToast()
   const stream = useJobStream(selected?.id ?? null, selected?.state ?? null)
+  // 生效态：SSE 最新事件 > 终态快照 > 点击时快照。按钮/徒章统一用它，
+  // 不再直接读 selected.state（快照不刷新 → 完成后「中止」常驻）。
+  const effState = selected ? stream.state ?? detail?.state ?? selected.state : null
 
   const reload = useCallback(async () => {
     try {
       const r = await api.jobs()
       setActive(r.active)
       setHistory(r.history)
+      // selected 是点击时快照：不跟着列表刷新就会永远停在旧 state——
+      // 任务完成后「中止」按钮常驻（2026-10-26 用户实见）。
+      setSelected((s) => {
+        if (!s) return s
+        const fresh = [...r.active, ...r.history].find((j) => j.id === s.id)
+        return fresh ? { ...s, ...fresh } : s
+      })
       setErr('')
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -118,7 +128,7 @@ export default function JobsPanel() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="text-[12px] text-slate-400 font-mono truncate">{selected.cmd_preview}</div>
-            {(selected.state === 'running' || selected.state === 'starting') && (
+            {(effState === 'running' || effState === 'starting') && (
               <button
                 onClick={() => void onAbort(selected.id)}
                 className="shrink-0 ml-3 px-3 py-1 rounded-lg text-[11px] font-medium bg-rose-600/80 text-white hover:bg-rose-500"

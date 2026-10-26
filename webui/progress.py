@@ -168,8 +168,12 @@ def _scan_error(text: str) -> str:
     return ""
 
 
-def parse(lines_or_text, extra_note: str = "") -> ProgressReport:
-    """解析任务日志尾部。extra_note 用来塞「任务还没输出」这类外部信息。"""
+def parse(lines_or_text, extra_note: str = "", min_stage: int = 0) -> ProgressReport:
+    """解析任务日志尾部。extra_note 用来塞「任务还没输出」这类外部信息。
+
+    min_stage：阶段单调地板——poller 把已推进到的阶段传回来，防止早期阶段
+    marker 被后续几万条 \r 进度块冲出窗口后进度条倒退（2026-10-26 33B 实跑：
+    61 分钟校准期卡片回退成「第 1/7 步 · 启动」）。"""
     text = lines_or_text if isinstance(lines_or_text, str) else "\n".join(lines_or_text)
     rep = ProgressReport()
     if not text.strip():
@@ -208,8 +212,12 @@ def parse(lines_or_text, extra_note: str = "") -> ProgressReport:
             bits.append(f"剩余 {left.group('left')}")
         rep.detail = " · ".join(bits)
 
-    rep.stage_idx = _pick_stage(lines, downloading, dataset)
+    rep.stage_idx = max(_pick_stage(lines, downloading, dataset), min_stage)
     rep.stage = STAGES[rep.stage_idx]
+    if rep.pct == 100.0 and rep.stage_idx < 5:
+        # 子条 100%（Loading weights 471/471 早就跑完）≠ 整体完成：总进度条
+        # 封顶 99，只有 done 分支有权画 100（用户：「要么不走动，要么直接完成」）。
+        rep.pct, rep.bar = 99.0, _bar(99)
 
     # 没有百分比的阶段，退化成「最后一行在忙什么」
     if rep.pct is None:

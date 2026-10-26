@@ -56,6 +56,7 @@ class Job:
     commit: str = ""
     started_at: float = field(default_factory=time.time)
     log_offset: int = 0       # SSE 续传游标 = 日志已读字节数
+    progress_stage: int = 0   # 阶段单调地板：防窗口冲掉 marker 后进度倒退（见 progress.parse）
     _subscribers: list = field(default_factory=list, repr=False)  # [(queue, loop), ...]
     _done: bool = field(default=False, repr=False)    # venv/eval_env 包装线程已退出
     _exc: BaseException | None = field(default=None, repr=False)
@@ -233,7 +234,9 @@ class JobRegistry:
                     # 读全量（至 1MB）：前端 log 事件是「追加」语义，必须发绝对
                     # 偏移才能算增量；只读 tail 时 len(raw) 不是文件位置。
                     raw = runner.read_log(job.task, 2 ** 20)
-                    rep = progress.parse(raw)
+                    rep = progress.parse(raw, min_stage=job.progress_stage)
+                    if rep.active:
+                        job.progress_stage = max(job.progress_stage, rep.stage_idx)
                     terminal = job.task.state != "running"
                     # 广播：只发新增字节。旧实现每轮广播整个 tail，前端累加后
                     # UI 滚出 N 份重复日志（2026-10-26 用户实见 8 份）。
