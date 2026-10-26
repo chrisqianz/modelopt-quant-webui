@@ -230,12 +230,17 @@ class JobRegistry:
             try:
                 if job.kind in ("quant", "eval"):
                     runner.poll_task(job.task)
-                    raw = runner.read_log(job.task, 30000)
+                    # 读全量（至 1MB）：前端 log 事件是「追加」语义，必须发绝对
+                    # 偏移才能算增量；只读 tail 时 len(raw) 不是文件位置。
+                    raw = runner.read_log(job.task, 2 ** 20)
                     rep = progress.parse(raw)
                     terminal = job.task.state != "running"
-                    # 广播
-                    job.log_offset = len(raw)
-                    self._broadcast(job, "log", {"tail": raw[-30000:]})
+                    # 广播：只发新增字节。旧实现每轮广播整个 tail，前端累加后
+                    # UI 滚出 N 份重复日志（2026-10-26 用户实见 8 份）。
+                    if len(raw) > job.log_offset:
+                        delta = raw[job.log_offset:]
+                        job.log_offset = len(raw)
+                        self._broadcast(job, "log", {"tail": delta})
                     self._broadcast(job, "progress", dataclasses.asdict(rep))
                 else:  # venv / eval_env
                     # log_path 为空时先 glob 定位真实日志（ensure_venv 内部自己 mkstemp）
@@ -251,7 +256,7 @@ class JobRegistry:
                         continue
                     # _done 且无日志（venv 已存在早退不写 /tmp 日志）⇒ raw 当空串，
                     # 直接落到下方 elif job._done 判终态，不再等 glob。
-                    raw = runner.tail_log(job.log_path, 30000) if job.log_path else ""
+                    raw = runner.tail_log(job.log_path, 2 ** 20) if job.log_path else ""
                     rep = progress.parse_install(raw.splitlines())
                     # 终态判定三选一：(a) 日志 marker (b) 包装线程退出无异常 (c) 有异常
                     m = re.search(r"(VENV_DONE|EVAL_ENV_DONE) rc=(\d+)", raw)
@@ -261,9 +266,11 @@ class JobRegistry:
                     elif job._done:      # 包装线程已退出（venv 已存在早退不写 marker 的情况）
                         terminal = True
                         job.state = "failed" if job._exc is not None else "done"
-                    # 广播
-                    job.log_offset = len(raw)
-                    self._broadcast(job, "log", {"tail": raw[-30000:]})
+                    # 广播：只发新增字节（同 quant 分支，前端是累加语义）
+                    if len(raw) > job.log_offset:
+                        delta = raw[job.log_offset:]
+                        job.log_offset = len(raw)
+                        self._broadcast(job, "log", {"tail": delta})
                     self._broadcast(job, "progress", dataclasses.asdict(rep))
             except Exception:
                 consecutive_errors += 1

@@ -58,6 +58,7 @@ _FATAL: list[tuple[str, str]] = [
     ("maximum number of retries exceeded", "HF 重试次数用完：网络不通或被限流"),
     ("401 client error", "HF 401：私有模型需要 token（HF_TOKEN 或 hf auth login）"),
     ("403 client error", "HF 403：无权限访问该仓库"),
+    ("gated dataset", "HF 受限数据集（gated）：先在网页同意数据集条款，再在 GPU 机 hf auth login 或设 HF_TOKEN 重跑"),
     ("repository not found", "HF 仓库不存在或名字写错"),
     ("traceback (most recent call last)", "进程抛异常退出了"),
     ("killed", "进程被系统杀掉（多半是内存/显存不足）"),

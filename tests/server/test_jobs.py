@@ -237,6 +237,46 @@ class TestPollerSSE:
         assert "bar" not in prog["data"]
         assert job.state == "done"
 
+    def test_poller_log_delta_no_duplication(self, registry, cfg):
+        """回归（2026-10-26 用户实见 UI 重复 8 份）：旧实现每轮广播整个 tail，
+        前端「追加」语义下同一段日志滚 N 遍。修后每轮只发新增字节：
+        无论 replay/轮询怎么交错，拼接结果里每行恰好出现一次。"""
+        d = cfg.local.task_path / "quant_delta"
+        d.mkdir(parents=True)
+        task = runner.Task(task_id="quant_delta", remote_cmd="true",
+                           log_path=str(d / "run.log"), pid="1", state="running")
+        job = registry.create("quant", task, "cmd")
+        st = {"content": "L1\n", "polls": 0}
+
+        def fake_poll(t):
+            st["polls"] += 1
+            st["content"] = {1: "L1\nL2\n",
+                             2: "L1\nL2\nL3\nQuantized model exported to: /x/out\n"
+                             }.get(st["polls"], st["content"])
+            t.state = "running" if st["polls"] < 2 else "done"
+
+        async def main():
+            with patch.object(jobs_mod.runner, "poll_task", fake_poll), \
+                 patch.object(jobs_mod.runner, "read_log",
+                              lambda t, tail_bytes=20000: st["content"]), \
+                 patch.object(jobs_mod, "_sleep", lambda s: time.sleep(0.05)):
+                q, start = registry.subscribe(job)
+                registry.start_poller(job)
+                text = ""
+                evs: list[dict] = []
+                async for line in registry.sse_stream(job, q, start):
+                    text += line
+                    evs = _sse_events(text)
+                    if evs and evs[-1]["type"] == "state":
+                        break
+                return evs
+
+        events = asyncio.run(main())
+        merged = "".join(e["data"]["tail"] for e in events if e["type"] == "log")
+        for token in ("L1\n", "L2\n", "L3\n"):
+            assert merged.count(token) == 1, f"{token!r} 重复/丢失: {merged!r}"
+        assert "Quantized model exported to" in merged
+
     def test_sse_stream_replay_dedup(self, registry, cfg):
         """start_offset 之后的日志走重放（event: log），去重游标内的 log 跳过。"""
         d = cfg.local.task_path / "quant_replay"
