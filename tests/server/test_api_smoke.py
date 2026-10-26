@@ -162,7 +162,10 @@ def test_preview_empty_model(client):
 
 
 def test_jobs_list(client, tmp_path):
-    j1 = api.REGISTRY.create("quant", None, "cmd-a", export_dir=str(tmp_path / "a"))
+    j1 = api.REGISTRY.create(
+        "quant", None,
+        "cd /repo && /v/bin/python hf_ptq.py --pyt_ckpt_path /home/models/Nanbeige4.3-33B --qformat nvfp4",
+        export_dir=str(tmp_path / "a"))
     j1.state = "running"
     j2 = api.REGISTRY.create("eval", None, "cmd-b")
     j2.state = "done"
@@ -171,7 +174,9 @@ def test_jobs_list(client, tmp_path):
     body = r.json()
     assert [j["id"] for j in body["active"]] == [j1.id]
     assert [j["id"] for j in body["history"]] == [j2.id]
-    assert body["active"][0]["cmd_preview"].startswith("cmd-a")
+    assert body["active"][0]["cmd_preview"].startswith("cd /repo")
+    assert body["active"][0]["model"] == "Nanbeige4.3-33B"   # 下拉/行靠它辨识「刚才那单」
+    assert body["history"][0]["model"] == ""
 
 
 def test_job_detail_quant(client, tmp_path):

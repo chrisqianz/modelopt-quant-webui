@@ -61,7 +61,7 @@ export default function RecipeView() {
                 .filter((j) => j.kind === 'quant')
                 .map((j) => (
                   <option key={j.id} value={j.id}>
-                    {j.id}（{stateLabel(j)}）
+                    {j.model ? `${j.model} · ` : ''}{j.id}（{stateLabel(j)}）
                   </option>
                 ))}
             </select>

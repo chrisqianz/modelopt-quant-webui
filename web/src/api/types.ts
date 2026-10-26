@@ -72,6 +72,7 @@ export interface JobSummary {
   export_dir: string
   version: string
   commit: string
+  model?: string
   cmd_preview: string
 }
 

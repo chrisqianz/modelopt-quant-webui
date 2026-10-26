@@ -96,6 +96,13 @@ def _net() -> dict:
             "hf_token_set": bool(CFG.net.hf_token)}
 
 
+def _model_of(cmd: str) -> str:
+    """从持久化 cmd 提模型名（--pyt_ckpt_path 尾段），供 job 列表/下拉辨识。
+    下拉/行只显 id 或「cd …」前缀时，用户认不出「刚才那单是谁」（m04896）。"""
+    m = re.search(r"--pyt_ckpt_path(?:=|\s+)'?([^'\s]+)'?", cmd or "")
+    return m.group(1).rstrip("/").rsplit("/", 1)[-1] if m else ""
+
+
 def _job_summary(j: Job) -> dict:
     return {
         "id": j.id,
@@ -106,6 +113,7 @@ def _job_summary(j: Job) -> dict:
         "version": j.version,
         "commit": j.commit,
         "cmd_preview": j.cmd[:120],
+        "model": _model_of(j.cmd),
     }
 
 

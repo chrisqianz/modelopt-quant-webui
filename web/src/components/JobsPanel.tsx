@@ -116,7 +116,7 @@ export default function JobsPanel() {
             <Badge state={j.state} />
             <span className="text-[12px] text-slate-300 font-medium w-20 shrink-0">{j.kind}</span>
             <span className="text-[11.5px] text-slate-500 font-mono truncate flex-1" title={j.cmd_preview}>
-              {j.cmd_preview || j.kind}
+              {j.model || j.cmd_preview || j.kind}
             </span>
             <span className="text-[11px] text-slate-600 font-mono shrink-0">{j.started_at}</span>
           </button>
