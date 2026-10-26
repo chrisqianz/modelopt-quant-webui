@@ -15,7 +15,7 @@ from webui.config import AppConfig
 
 # ---------------------------------------------------------------- 映射表
 
-# UI 字段名 -> hf_ptq.py flag 名（18 项，逐项对照 webui/cmds.py build_cmd 的
+# UI 字段名 -> hf_ptq.py flag 名（19 项，逐项对照 webui/cmds.py build_cmd 的
 # parts.append 真实字面量）。UI 字段名即 build_params 的 dict key。
 FLAG_UI: dict[str, str] = {
     "model": "--pyt_ckpt_path",
@@ -36,6 +36,7 @@ FLAG_UI: dict[str, str] = {
     "low_memory_mode": "--low_memory_mode",
     "gpu_max_mem_percentage": "--gpu_max_mem_percentage",
     "skip_generate": "--skip_generate",
+    "use_seq_device_map": "--use_seq_device_map",
 }
 
 _HF_PTQ_RELPATH = ("examples", "hf_ptq", "hf_ptq.py")

@@ -19,7 +19,7 @@ INPUT_ORDER = [
     "datasets", "sizes_names", "sizes_table", "custom_datasets", "calib_seq",
     "calib_with_images", "export_path", "batch_size", "device",
     "attn_implementation", "use_fsdp2", "cpu_offload", "low_memory_mode",
-    "gpu_max_mem_percentage", "skip_generate",
+    "gpu_max_mem_percentage", "skip_generate", "use_seq_device_map",
 ]
 
 

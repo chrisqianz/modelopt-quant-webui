@@ -34,6 +34,7 @@ interface FormState {
   cpu_offload: boolean
   low_memory_mode: boolean
   skip_generate: boolean
+  use_seq_device_map: boolean
   extra_args: string
 }
 
@@ -63,6 +64,7 @@ function buildInitialForm(data: Bootstrap | null): FormState {
     cpu_offload: false,
     low_memory_mode: false,
     skip_generate: false,
+    use_seq_device_map: false,
     extra_args: '',
   }
   void defSize
@@ -144,6 +146,7 @@ export default function QuantizeView({ data, onModelChange }: {
     cpu_offload: form.cpu_offload,
     low_memory_mode: form.low_memory_mode,
     skip_generate: form.skip_generate,
+    use_seq_device_map: form.use_seq_device_map,
     extra_args: form.extra_args,
   })
 
@@ -461,6 +464,11 @@ export default function QuantizeView({ data, onModelChange }: {
                 <Toggle label="use_fsdp2" checked={form.use_fsdp2} onChange={(v) => set('use_fsdp2', v)} />
                 <Toggle label="cpu_offload" checked={form.cpu_offload} onChange={(v) => set('cpu_offload', v)} />
                 <Toggle label="low_memory_mode" checked={form.low_memory_mode} onChange={(v) => set('low_memory_mode', v)} />
+                <Toggle
+                  label="use_seq_device_map（device_map=sequential 逐层上卡，配 gpu_max_mem 预算）"
+                  checked={form.use_seq_device_map}
+                  onChange={(v) => set('use_seq_device_map', v)}
+                />
                 <Toggle label="skip_generate" checked={form.skip_generate} onChange={(v) => set('skip_generate', v)} />
               </div>
               <Field label="extra_args（逃生口：原样拼到命令尾；禁止 ; 与 &&）" full>

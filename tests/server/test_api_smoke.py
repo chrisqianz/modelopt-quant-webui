@@ -62,7 +62,8 @@ def client(tmp_path, monkeypatch):
                     "flags_all": ["--qformat", "--pyt_ckpt_path", "--calib_seq",
                                    "--batch_size", "--device", "--dataset",
                                    "--calib_size", "--kv_cache_qformat", "--recipe",
-                                   "--attn_implementation", "--export_path"],
+                                   "--attn_implementation", "--export_path",
+                                   "--use_seq_device_map"],
                     "mapped": ["--qformat"], "unmapped": [], "missing": [], "error": ""})
     return TestClient(api.app)
 

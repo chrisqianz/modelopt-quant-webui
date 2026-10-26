@@ -42,6 +42,7 @@ class QuantizeParams(BaseModel):
     low_memory_mode: bool = False
     gpu_max_mem_percentage: float = 0.0
     skip_generate: bool = False
+    use_seq_device_map: bool = False
     extra_args: str = ""  # 附加参数逃生口（本计划只存不拼）
 
     def to_build_params_dict(self) -> dict:

@@ -12,7 +12,7 @@ from server.schemas import (
 )
 
 
-def test_quantize_params_dumps_all_20_keys() -> None:
+def test_quantize_params_dumps_all_21_keys() -> None:
     q = QuantizeParams(
         model="x",
         qformat="nvfp4",
@@ -20,12 +20,13 @@ def test_quantize_params_dumps_all_20_keys() -> None:
         dataset_sizes={"cnn_dailymail": 1024},
     )
     d = q.to_build_params_dict()
-    # 核心契约：字段名与 build_params 的 19 个 key 一一对应，再 + extra_args
+    # 核心契约：字段名与 build_params 的 20 个 key 一一对应，再 + extra_args
     assert set(d) == {
         "model", "trust_remote_code", "qformat", "recipe", "kv_cache_qformat",
         "datasets", "dataset_sizes", "custom_datasets", "calib_seq", "calib_with_images",
         "export_path", "batch_size", "device", "attn_implementation", "use_fsdp2",
         "cpu_offload", "low_memory_mode", "gpu_max_mem_percentage", "skip_generate",
+        "use_seq_device_map",
     } | {"extra_args"}
     assert d["model"] == "x"
     assert d["qformat"] == "nvfp4"

@@ -138,6 +138,7 @@ export interface QuantizeParams {
   low_memory_mode?: boolean
   gpu_max_mem_percentage?: number
   skip_generate?: boolean
+  use_seq_device_map?: boolean
   extra_args?: string
 }
 

@@ -62,7 +62,7 @@ def fmt_val(x) -> str:
 
 def build_params(a: list, cfg: AppConfig) -> dict:
     """把事件回调位置参数解析成 build_cmd 需要的 dict。
-    a[0..19] 对应 UI 参数区固定顺序（见 INPUT_ORDER）。"""
+    a[0..20] 对应 UI 参数区固定顺序（见 INPUT_ORDER）。"""
     sizes: dict[str, int] = {}
     for i, name in enumerate(a[6] or []):  # sizes_names 勾选顺序
         row = a[7][i] if a[7] and i < len(a[7]) else None
@@ -83,6 +83,8 @@ def build_params(a: list, cfg: AppConfig) -> dict:
         "batch_size": a[12], "device": a[13], "attn_implementation": a[14],
         "use_fsdp2": a[15], "cpu_offload": a[16], "low_memory_mode": a[17],
         "gpu_max_mem_percentage": a[18], "skip_generate": a[19],
+        # a[20]：老调用方只传 20 位（golden 旧用例），越界即 False 保持命令不变
+        "use_seq_device_map": bool(a[20]) if len(a) > 20 else False,
     }
 
 
@@ -189,6 +191,10 @@ def build_cmd(p: dict, cfg: AppConfig) -> str:
         parts.append("--cpu_offload")
     if p.get("low_memory_mode"):
         parts.append("--low_memory_mode")
+    if p.get("use_seq_device_map"):
+        # device_map=sequential：accelerate 逐层顺序上卡，配 gpu_max_mem_percentage 预算；
+        # 大模型在单卡上避免全量上 CUDA 打爆显存（hf_ptq.py --use_seq_device_map）。
+        parts.append("--use_seq_device_map")
     gmp = p.get("gpu_max_mem_percentage")
     if gmp:
         parts.append(f"--gpu_max_mem_percentage {float(gmp)}")

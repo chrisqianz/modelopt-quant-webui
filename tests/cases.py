@@ -37,6 +37,19 @@ QUANTIZE_CASES: dict[str, dict] = {
         "gpu_max_mem_percentage": 0.0, "skip_generate": False,
         "extra_args": "",
     },
+    "seq_device_map_gpu_budget": {
+        # device_map=sequential 逐层上卡：配 gpu_max_mem_percentage 预算（大模型单卡场景）
+        "model": "deepseek-ai/DeepSeek-OCR", "trust_remote_code": True,
+        "qformat": "nvfp4", "recipe": "", "kv_cache_qformat": "none",
+        "datasets": ["cnn_dailymail"], "sizes_names": ["cnn_dailymail"],
+        "sizes": {"cnn_dailymail": 512}, "custom_datasets": [],
+        "calib_seq": 512, "calib_with_images": False, "export_path": "",
+        "batch_size": 1, "device": "cuda", "attn_implementation": "sdpa",
+        "use_fsdp2": False, "cpu_offload": False, "low_memory_mode": False,
+        "gpu_max_mem_percentage": 0.8, "skip_generate": False,
+        "use_seq_device_map": True,
+        "extra_args": "",
+    },
     "custom_dataset_single_col": {
         "model": "hf-org/Tiny-124M", "trust_remote_code": False,
         "qformat": "nvfp4", "recipe": "", "kv_cache_qformat": "none",
