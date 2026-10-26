@@ -527,3 +527,30 @@ def test_start_task_no_token_keeps_env_none(cfg, monkeypatch):
     runner.start_task(cfg, str(cfg.local.task_path), "org/m", "/x/exported",
                       "python hf_ptq.py", "", lambda s: None)
     assert seen["env"] is None
+
+
+# ---------------------------------------------------------------- 非 UTF-8 日志（2026-10-26 事故回归）
+
+def test_exec_replaces_undecodable_bytes():
+    """模型生成的日志可含任意字节；_exec 严格解码曾炸死整条读取链。"""
+    rc, out, err = runner.run_shell("printf '\\210ok'")   # \210 = 0x88
+    assert rc == 0 and out.endswith("ok")
+
+
+def test_poll_task_done_despite_binary_noise_in_tail(cfg, tmp_path):
+    """tail -c 4000 里混入非 UTF-8 字节：poll_task 不得抛异常，须照旧找 marker。"""
+    log = tmp_path / "run.log"
+    log.write_bytes(b"A" * 3990 + b"\x88\x88\x88"
+                    + b"\nQuantized model exported to: /x\n")
+    task = runner.Task(task_id="t", remote_cmd="true",
+                       log_path=str(log), pid=DEAD_PID)
+    runner.poll_task(task)
+    assert task.state == "done"
+
+
+def test_read_log_survives_binary_bytes(cfg, tmp_path):
+    """detail 端点/SSE 重放走 read_log（tail -c N 可能从多字节字符中间截断）。"""
+    log = tmp_path / "run.log"
+    log.write_bytes(("校准中" * 2000).encode() + b"\x88" + b"done\n")
+    text = runner.tail_log(str(log), 30000)   # 不得抛 UnicodeDecodeError
+    assert text.endswith("done")

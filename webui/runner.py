@@ -48,7 +48,12 @@ def q_remote(path: str | Path) -> str:
 def _exec(argv: list[str], timeout: int = 60,
           env: dict | None = None) -> tuple[int, str, str]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        # errors="replace"：量化日志可能含模型生成的非 UTF-8 字节（如 example
+        # outputs 里的乱码），而 tail -c N 还可能从多字节字符中间截断——严格解码
+        # 会抛 UnicodeDecodeError，把 poller/detail/SSE 全链炸死（2026-10-26
+        # Nanbeige4.3-33B 实跑事故：成功任务被冻结在 running + detail 500）。
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              errors="replace", timeout=timeout, env=env)
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
     except subprocess.TimeoutExpired:
         return -1, "", f"命令超时 ({timeout}s): {' '.join(argv[-2:])[:120]}"
