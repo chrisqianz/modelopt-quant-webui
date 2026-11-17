@@ -1,0 +1,26 @@
+--- a/modelopt/torch/quantization/plugins/huggingface.py
++++ b/modelopt/torch/quantization/plugins/huggingface.py
+@@ -1491,6 +1491,23 @@
+     is_homogeneous_hf_model, get_homogeneous_hf_decoder_layers
+ )
+
++# Agnes (AgnesForConditionalGeneration): decoder layers live at
++# model.core.text_engine.stages (a ModuleList of DecoderStage), which the
++# generic .model/.language_model/.layers chain above does not reach. Register
++# a dedicated discoverer so streaming export can materialize them layer-wise.
++def _is_agnes_theta_model(model: nn.Module) -> bool:
++    return getattr(getattr(model, "core", None), "text_engine", None) is not None
++
++
++def _get_agnes_theta_decoder_layers(model: nn.Module) -> nn.ModuleList | None:
++    stages = getattr(getattr(getattr(model, "core", None), "text_engine", None), "stages", None)
++    return stages if isinstance(stages, nn.ModuleList) else None
++
++
++LayerActivationCollector.register_decoder_layer_support(
++    _is_agnes_theta_model, _get_agnes_theta_decoder_layers
++)
++
+
+ CUSTOM_MODEL_PLUGINS.update(
+     [

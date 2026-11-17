@@ -67,6 +67,12 @@ torch，import 失败自动回滚）和 `causal-conv1d`（只认预编译轮子�
 UI 的「运行环境」面板里改这四行并保存会写回 `config.yaml`（保存会抹掉
 config.yaml 的注释）。
 
+### ModelOpt 补丁
+
+WebUI 不改上游 ModelOpt，量化行为差异通过补丁实现：[patches/](patches/README.md)
+存可复现的 `git apply` 补丁 + 逐条说明（如 Agnes 架构 decoder 层发现修复），
+在目标机的 ModelOpt 仓库上应用一次即可。
+
 ## HuggingFace 网络
 
 `config.yaml` 的 `network:` 段。GPU 机常常直连 huggingface.co 不通：
